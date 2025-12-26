@@ -592,15 +592,24 @@ track(RunService.Stepped:Connect(function()
 end))
 
 -- =========================================================
--- Teleport tab (+ Follow) with Team Filter
+-- TELEPORT TAB (Players + Follow)
 -- =========================================================
+
+local TpSec = Tabs.Teleport:AddSection("Players")
+local FollowSec = Tabs.Teleport:AddSection("Follow")
+
+-- =========================
+-- TEAM FILTER
+-- =========================
 local TeamDropdown
 local TpDropdown
 
 local function getTeamNames()
 	local values = { "All" }
-	for _, team in ipairs(Teams:GetChildren()) do
-		if team:IsA("Team") then table.insert(values, team.Name) end
+	for _, team in ipairs(game:GetService("Teams"):GetChildren()) do
+		if team:IsA("Team") then
+			table.insert(values, team.Name)
+		end
 	end
 	table.sort(values, function(a, b)
 		if a == "All" then return true end
@@ -610,253 +619,244 @@ local function getTeamNames()
 	return values
 end
 
-local function getPlayerNamesFiltered()
-	local teamName = state.targetTeamFilter
-	if not isValidTeamName(teamName) then teamName = "All" end
+local function getFilteredPlayers()
 	local names = {}
-	for _, p in ipairs(Players:GetPlayers()) do
-		if playerMatchesTeam(p, teamName) then table.insert(names, p.Name) end
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if playerMatchesTeam(plr, state.targetTeamFilter) then
+			table.insert(names, plr.Name)
+		end
 	end
 	table.sort(names)
 	return names
 end
 
-local function refreshTeamDropdown(tryKeep)
-	if not TeamDropdown then return end
-	local current = Fluent.Options.TeamFilter and Fluent.Options.TeamFilter.Value or "All"
-	local values = getTeamNames()
-	TeamDropdown:SetValues(values)
-	if tryKeep and table.find(values, current) then
-		Fluent.Options.TeamFilter:SetValue(current)
-	else
-		Fluent.Options.TeamFilter:SetValue("All")
-	end
-end
-
-local function refreshTargetDropdown(tryKeepTarget)
-	if not TpDropdown then return end
-	local current = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-	local values = getPlayerNamesFiltered()
-	TpDropdown:SetValues(values)
-	if tryKeepTarget and current and table.find(values, current) then
-		Fluent.Options.TPPlayer:SetValue(current)
-	elseif #values > 0 then
-		Fluent.Options.TPPlayer:SetValue(values[1])
-	end
-end
-
-local function getFollowablePlayersOrdered()
-	local teamName = state.targetTeamFilter
-	if not isValidTeamName(teamName) then teamName = "All" end
-	local list = {}
-	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer and playerMatchesTeam(p, teamName) then
-			table.insert(list, p.Name)
-		end
-	end
-	table.sort(list)
-	return list
-end
-
-local function pickNextName(currentName)
-	local list = getFollowablePlayersOrdered()
-	if #list == 0 then return nil end
-	if not currentName then return list[1] end
-	local idx
-	for i, name in ipairs(list) do
-		if name == currentName then idx = i break end
-	end
-	if not idx then return list[1] end
-	local nextIdx = idx + 1
-	if nextIdx > #list then nextIdx = 1 end
-	return list[nextIdx]
-end
-
-local function setTargetDropdown(name)
-	if not name then return end
-	if Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.SetValue then
-		Fluent.Options.TPPlayer:SetValue(name)
-	end
-end
-
 TeamDropdown = TpSec:AddDropdown("TeamFilter", {
 	Title = "Team Filter",
-	Description = "Target list will only show players on this team.",
 	Values = getTeamNames(),
 	Multi = false,
-	Default = 1,
+	Default = 1
 })
 
 TeamDropdown:OnChanged(function(val)
-	if type(val) ~= "string" then return end
-	if not isValidTeamName(val) then val = "All" end
 	state.targetTeamFilter = val
-	refreshTargetDropdown(false)
+	if TpDropdown then
+		TpDropdown:SetValues(getFilteredPlayers())
+	end
 end)
 
+-- =========================
+-- TARGET DROPDOWN
+-- =========================
 TpDropdown = TpSec:AddDropdown("TPPlayer", {
-	Title = "Target",
-	Values = getPlayerNamesFiltered(),
+	Title = "Target Player",
+	Values = getFilteredPlayers(),
 	Multi = false,
-	Default = 1,
+	Default = 1
 })
 
-track(Teams.ChildAdded:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
-track(Teams.ChildRemoved:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
-track(Players.PlayerAdded:Connect(function() refreshTargetDropdown(true) end))
-track(Players.PlayerRemoving:Connect(function() refreshTargetDropdown(true) end))
+Players.PlayerAdded:Connect(function()
+	TpDropdown:SetValues(getFilteredPlayers())
+end)
 
-local teamConns = {}
-local function hookTeamChange(plr)
-	if teamConns[plr] then teamConns[plr]:Disconnect() end
-	teamConns[plr] = plr:GetPropertyChangedSignal("Team"):Connect(function()
-		if Fluent.Unloaded or state.terminated then return end
-		refreshTargetDropdown(true)
-	end)
-end
-for _, p in ipairs(Players:GetPlayers()) do hookTeamChange(p) end
-track(Players.PlayerAdded:Connect(hookTeamChange))
-track(Players.PlayerRemoving:Connect(function(plr)
-	if teamConns[plr] then teamConns[plr]:Disconnect(); teamConns[plr] = nil end
-end))
+Players.PlayerRemoving:Connect(function()
+	TpDropdown:SetValues(getFilteredPlayers())
+end)
 
+-- =========================
+-- TELEPORT BUTTON
+-- =========================
 TpSec:AddButton({
-	Title = "Teleport",
+	Title = "Teleport to Player",
 	Callback = function()
-		local targetName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-		if type(targetName) ~= "string" then return end
-		local target = Players:FindFirstChild(targetName)
-		if not target then return end
-		if not playerMatchesTeam(target, state.targetTeamFilter) then return end
-		local theirRoot = getRootOf(target)
+		local name = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
+		local plr = name and Players:FindFirstChild(name)
+		if not plr or plr == LocalPlayer then return end
+		if not playerMatchesTeam(plr, state.targetTeamFilter) then return end
+
+		local theirRoot = getRootOf(plr)
 		if not theirRoot then return end
+
 		getRoot().CFrame = theirRoot.CFrame * CFrame.new(0, 0, 3)
 		maybeEquipAfterAction()
 	end
 })
 
--- Follow UI
+-- =========================================================
+-- FOLLOW SYSTEM (TP once → then smooth follow)
+-- =========================================================
+
+local followDiedConn
+local followAcc = 0
+
+local function disconnectFollowDeath()
+	if followDiedConn then
+		followDiedConn:Disconnect()
+		followDiedConn = nil
+	end
+end
+
+local function teleportBehindTarget(plr)
+	local theirRoot = getRootOf(plr)
+	if not theirRoot then return false end
+
+	local myRoot = getRoot()
+	if not myRoot then return false end
+
+	myRoot.CFrame =
+		theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
+	return true
+end
+
+local function getCurrentTarget()
+	local name = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
+	if not name then return nil end
+	local plr = Players:FindFirstChild(name)
+	if not plr or plr == LocalPlayer then return nil end
+	if not playerMatchesTeam(plr, state.targetTeamFilter) then return nil end
+	return plr
+end
+
+function switchToNextTarget()
+	local nextName = pickNextName(Fluent.Options.TPPlayer.Value)
+	if not nextName then
+		state.followEnabled = false
+		if Fluent.Options.FollowToggle then
+			Fluent.Options.FollowToggle:SetValue(false)
+		end
+		disconnectFollowDeath()
+		return
+	end
+
+	setTargetDropdown(nextName)
+
+	local plr = Players:FindFirstChild(nextName)
+	if plr then
+		teleportBehindTarget(plr)
+		maybeEquipAfterAction()
+		bindDeathToTarget(plr)
+	end
+end
+
+function bindDeathToTarget(plr)
+	disconnectFollowDeath()
+	local hum = getHumanoidOf(plr)
+	if not hum then return end
+
+	followDiedConn = hum.Died:Connect(function()
+		if state.followEnabled then
+			switchToNextTarget()
+		end
+	end)
+end
+
+-- =========================
+-- FOLLOW UI
+-- =========================
 FollowSec:AddToggle("FollowToggle", {
-	Title = "Follow Target",
+	Title = "Follow Player",
 	Default = false,
 	Callback = function(on)
 		state.followEnabled = on
-		if not on then state.followPaused = false end
+		followAcc = 0
+
+		if not on then
+			disconnectFollowDeath()
+			return
+		end
+
+		local target = getCurrentTarget()
+		if not target then
+			switchToNextTarget()
+			target = getCurrentTarget()
+		end
+
+		if not target then
+			state.followEnabled = false
+			if Fluent.Options.FollowToggle then
+				Fluent.Options.FollowToggle:SetValue(false)
+			end
+			return
+		end
+
+		teleportBehindTarget(target)
+		maybeEquipAfterAction()
+		bindDeathToTarget(target)
 	end
 })
-FollowSec:AddSlider("FollowBack", { Title = "Offset Back", Default = 4, Min = 0, Max = 25, Rounding = 0, Callback = function(v) state.followOffsetBack = v end })
-FollowSec:AddSlider("FollowUp", { Title = "Offset Up", Default = 0, Min = -10, Max = 25, Rounding = 0, Callback = function(v) state.followOffsetUp = v end })
-FollowSec:AddSlider("FollowSmooth", { Title = "Smoothness", Description = "Higher is more smooth and more detectable. Lower is less smooth and less detectable.", Default = 12, Min = 1, Max = 25, Rounding = 0, Callback = function(v) state.followSmoothness = v end })
-FollowSec:AddSlider("FollowRate", { Title = "Update Rate", Default = 0.01, Min = 0.01, Max = 1, Rounding = 2, Callback = function(v) state.followUpdateRate = v end })
+
+FollowSec:AddSlider("FollowBack", {
+	Title = "Offset Back",
+	Default = 4,
+	Min = 0, Max = 25, Rounding = 0,
+	Callback = function(v) state.followOffsetBack = v end
+})
+
+FollowSec:AddSlider("FollowUp", {
+	Title = "Offset Up",
+	Default = 0,
+	Min = -10, Max = 25, Rounding = 0,
+	Callback = function(v) state.followOffsetUp = v end
+})
+
+FollowSec:AddSlider("FollowSmooth", {
+	Title = "Smoothness",
+	Default = 12,
+	Min = 1, Max = 25, Rounding = 0,
+	Callback = function(v) state.followSmoothness = v end
+})
+
+FollowSec:AddSlider("FollowRate", {
+	Title = "Update Rate (sec)",
+	Default = 0.01,
+	Min = 0.01, Max = 1, Rounding = 2,
+	Callback = function(v) state.followUpdateRate = v end
+})
 
 FollowSec:AddToggle("EquipOnTPFollow", {
-	Title = "Equip Selected Weapon on TP",
-	Description = "Uses the Player tab's weapon dropdown selection.",
+	Title = "Equip weapon on TP / Follow",
 	Default = false,
-	Callback = function(on) state.equipOnFollowOrTP = on end
+	Callback = function(on)
+		state.equipOnFollowOrTP = on
+	end
 })
 
 FollowSec:AddButton({
 	Title = "Stop Follow",
 	Callback = function()
 		state.followEnabled = false
-		state.followPaused = false
-		if Fluent.Options.FollowToggle then Fluent.Options.FollowToggle:SetValue(false) end
+		disconnectFollowDeath()
+		if Fluent.Options.FollowToggle then
+			Fluent.Options.FollowToggle:SetValue(false)
+		end
 	end
 })
 
--- Auto-next on TARGET death
-local followDiedConn
-local function disconnectFollowDied()
-	if followDiedConn then followDiedConn:Disconnect(); followDiedConn = nil end
-end
-
-local function switchToNextTarget()
-	local currentName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-	local nextName = pickNextName(currentName)
-	if not nextName then
-		state.followEnabled = false
-		state.followPaused = false
-		if Fluent.Options.FollowToggle then Fluent.Options.FollowToggle:SetValue(false) end
-		disconnectFollowDied()
-		return
-	end
-	setTargetDropdown(nextName)
-	disconnectFollowDied()
-
-	local nextPlr = Players:FindFirstChild(nextName)
-	if nextPlr then
-		local hum = getHumanoidOf(nextPlr)
-		if hum then
-			followDiedConn = hum.Died:Connect(function()
-				if state.followEnabled then switchToNextTarget() end
-			end)
-		end
-	end
-end
-
-local function bindDeathListenerForCurrentTarget()
-	disconnectFollowDied()
-	if not state.followEnabled then return end
-	if not Fluent.Options.TPPlayer then return end
-
-	local name = Fluent.Options.TPPlayer.Value
-	local plr = Players:FindFirstChild(name)
-	if not plr or plr == LocalPlayer then switchToNextTarget(); return end
-	if not playerMatchesTeam(plr, state.targetTeamFilter) then switchToNextTarget(); return end
-
-	local hum = getHumanoidOf(plr)
-	if not hum then switchToNextTarget(); return end
-
-	followDiedConn = hum.Died:Connect(function()
-		if state.followEnabled then switchToNextTarget() end
-	end)
-end
-
-TpDropdown:OnChanged(function()
-	if state.followEnabled then bindDeathListenerForCurrentTarget() end
-end)
-
--- Follow loop (smooth lerp)
-local followAcc = 0
-local followEquippedThisSession = false
-
+-- =========================
+-- FOLLOW LOOP (smooth, no snap)
+-- =========================
 track(RunService.RenderStepped:Connect(function(dt)
-	if Fluent.Unloaded or state.terminated then return end
-
-	if not state.followEnabled then
-		followEquippedThisSession = false
-		if followDiedConn then disconnectFollowDied() end
-		return
-	end
-	if state.followPaused then return end
-
-	if not followDiedConn then bindDeathListenerForCurrentTarget() end
+	if not state.followEnabled then return end
 
 	followAcc += dt
 	if followAcc < state.followUpdateRate then return end
 	followAcc = 0
 
-	local targetName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-	if type(targetName) ~= "string" then return end
-
-	local target = Players:FindFirstChild(targetName)
-	if not target or target == LocalPlayer then switchToNextTarget(); return end
-	if not playerMatchesTeam(target, state.targetTeamFilter) then switchToNextTarget(); return end
-
-	local theirRoot = getRootOf(target)
-	if not theirRoot then switchToNextTarget(); return end
-
-	local myRoot
-	pcall(function() myRoot = getRoot() end)
-	if not myRoot then return end
-
-	if state.equipOnFollowOrTP and not followEquippedThisSession then
-		followEquippedThisSession = true
-		maybeEquipAfterAction()
+	local target = getCurrentTarget()
+	if not target then
+		switchToNextTarget()
+		return
 	end
 
-	local desired = theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
+	local theirRoot = getRootOf(target)
+	local myRoot = getRoot()
+	if not theirRoot or not myRoot then
+		switchToNextTarget()
+		return
+	end
+
+	local desired =
+		theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
+
 	local alpha = 1 - math.exp(-state.followSmoothness * dt)
 	myRoot.CFrame = myRoot.CFrame:Lerp(desired, alpha)
 end))
