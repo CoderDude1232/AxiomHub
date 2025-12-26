@@ -1,11 +1,20 @@
--- [[ UNIVERSAL SCRIPT HUB ]] --
+--// Fluent Admin Panel (Client Only) - Full Script
+--// LocalScript
+--// Notes:
+--// - Serverhop uses HttpService:GetAsync() (will error in normal LocalScript; works only if your environment supports client HTTP)
+--// - Follow: when enabled (and on target switches) it TELEPORTS ONCE behind the target, then smoothly follows.
+--// - Settings tab uses InterfaceManager + SaveManager (no custom settings UI).
 
+--========================
 -- Imports
+--========================
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
 local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
 
+--========================
 -- Services
+--========================
 local Players = game:GetService("Players")
 local Teams = game:GetService("Teams")
 local UIS = game:GetService("UserInputService")
@@ -18,7 +27,9 @@ local TeleportService = game:GetService("TeleportService")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
+--========================
 -- Helpers
+--========================
 local function getChar()
 	return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 end
@@ -59,12 +70,21 @@ local function playerMatchesTeam(plr, teamName)
 	return plr.Team == team
 end
 
+-- Track connections so Terminate can cleanly disconnect
+local connections = {}
+local function track(conn)
+	table.insert(connections, conn)
+	return conn
+end
+
+--========================
 -- Window
+--========================
 local MINIMIZE_KEY = Enum.KeyCode.RightShift
 
 local Window = Fluent:CreateWindow({
-	Title = "Universal",
-	SubTitle = "Script Hub",
+	Title = "Admin Panel",
+	SubTitle = "Client",
 	TabWidth = 160,
 	Size = UDim2.fromOffset(720, 600),
 	Acrylic = true,
@@ -72,16 +92,18 @@ local Window = Fluent:CreateWindow({
 	MinimizeKey = MINIMIZE_KEY
 })
 
--- Reliable RightShift minimize
-UIS.InputBegan:Connect(function(input, gameProcessed)
+-- Reliable RightShift minimize (some setups ignore MinimizeKey)
+track(UIS.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
 	if Fluent.Unloaded then return end
 	if input.KeyCode == MINIMIZE_KEY then
 		Window:Minimize()
 	end
-end)
+end))
 
+--========================
 -- Tabs
+--========================
 local Tabs = {
 	Player   = Window:AddTab({ Title = "Player",   Icon = "user" }),
 	Movement = Window:AddTab({ Title = "Movement", Icon = "activity" }),
@@ -92,30 +114,9 @@ local Tabs = {
 	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
 }
 
--- Sections
-local PlayerSec = Tabs.Player:AddSection("Stats")
-local AltSpeedSec = Tabs.Player:AddSection("Alt Speed")
-local WeaponSec = Tabs.Player:AddSection("Weapons")
-local HealthSec = Tabs.Player:AddSection("Health")
-local CameraSec = Tabs.Player:AddSection("Camera")
-
-local MoveSec = Tabs.Movement:AddSection("Movement")
-local UtilSec = Tabs.Movement:AddSection("Utility")
-
-local TpSec = Tabs.Teleport:AddSection("Players")
-local FollowSec = Tabs.Teleport:AddSection("Follow")
-local SavedSec = Tabs.Teleport:AddSection("Waypoints")
-
-local VisualSec = Tabs.Visual:AddSection("Lighting")
-local FreecamSec = Tabs.Visual:AddSection("Freecam")
-
-local EspSec = Tabs.ESP:AddSection("ESP")
-local HitboxSec = Tabs.ESP:AddSection("Hitboxes")
-
-local ServerSec = Tabs.Utility:AddSection("Server")
-local TerminateSec = Tabs.Utility:AddSection("Terminate")
-
+--========================
 -- State
+--========================
 local state = {
 	-- movement
 	noclip = false,
@@ -162,10 +163,10 @@ local state = {
 	-- Weapons
 	autoEquip = false,
 
-	-- Team filter for targets
+	-- Team filter
 	targetTeamFilter = "All",
 
-	-- Alt speed (does not change WalkSpeed)
+	-- Alt speed
 	altSpeedEnabled = false,
 	altSpeedBoost = 0,
 	altSpeedMaxVel = 120,
@@ -175,62 +176,44 @@ local state = {
 	freecamSpeed = 48,
 	freecamFastMult = 3,
 
-	-- Terminate guard
+	-- Terminate
 	terminated = false,
 }
 
--- Connection registry so terminate can cleanly disconnect
-local connections = {}
-local function track(conn)
-	table.insert(connections, conn)
-	return conn
-end
+--========================
+-- Sections
+--========================
+-- Player
+local PlayerSec    = Tabs.Player:AddSection("Stats")
+local AltSpeedSec  = Tabs.Player:AddSection("Alt Speed (No WalkSpeed)")
+local WeaponSec    = Tabs.Player:AddSection("Weapons")
+local HealthSec    = Tabs.Player:AddSection("Health")
+local CameraSec    = Tabs.Player:AddSection("Camera")
 
--- =========================================================
--- Alt Speed (No WalkSpeed): velocity assist while moving
--- =========================================================
-local function getMoveDirection()
-	local char = LocalPlayer.Character
-	if not char then return Vector3.zero end
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not hum then return Vector3.zero end
-	return hum.MoveDirection or Vector3.zero
-end
+-- Movement
+local MoveSec = Tabs.Movement:AddSection("Movement")
+local UtilMoveSec = Tabs.Movement:AddSection("Utility")
 
-track(RunService.Heartbeat:Connect(function(dt)
-	if Fluent.Unloaded or state.terminated then return end
-	if not state.altSpeedEnabled then return end
-	if state.altSpeedBoost <= 0 then return end
+-- Teleport
+local TpSec       = Tabs.Teleport:AddSection("Players")
+local FollowSec   = Tabs.Teleport:AddSection("Follow")
+local WaypointSec = Tabs.Teleport:AddSection("Waypoints")
 
-	local char = LocalPlayer.Character
-	if not char then return end
+-- Visual
+local VisualSec = Tabs.Visual:AddSection("Lighting")
+local FreecamSec = Tabs.Visual:AddSection("Freecam")
 
-	local root = char:FindFirstChild("HumanoidRootPart")
-	local hum = char:FindFirstChildOfClass("Humanoid")
-	if not root or not hum then return end
-	if hum.Health <= 0 then return end
+-- ESP
+local EspSec = Tabs.ESP:AddSection("ESP")
+local HitboxSec = Tabs.ESP:AddSection("Hitboxes")
 
-	local dir = getMoveDirection()
-	if dir.Magnitude < 0.05 then return end
-	dir = Vector3.new(dir.X, 0, dir.Z)
-	if dir.Magnitude < 0.05 then return end
-	dir = dir.Unit
+-- Utility
+local ServerSec = Tabs.Utility:AddSection("Server")
+local TerminateSec = Tabs.Utility:AddSection("Terminate")
 
-	local vel = root.AssemblyLinearVelocity
-	local horiz = Vector3.new(vel.X, 0, vel.Z)
-
-	local boosted = horiz + (dir * state.altSpeedBoost)
-	local mag = boosted.Magnitude
-	if mag > state.altSpeedMaxVel then
-		boosted = boosted.Unit * state.altSpeedMaxVel
-	end
-
-	root.AssemblyLinearVelocity = Vector3.new(boosted.X, vel.Y, boosted.Z)
-end))
-
--- =========================================================
+--========================
 -- Weapon Equipper
--- =========================================================
+--========================
 local weaponDropdown
 
 local function getToolNames()
@@ -293,7 +276,7 @@ local function maybeEquipAfterAction()
 	task.defer(equipSelectedTool)
 end
 
-WeaponSec:AddParagraph({ Title = "Item Equipper", Content = "Equips your item of choice." })
+WeaponSec:AddParagraph({ Title = "Weapon Equipper", Content = "Client-side equip helper (Backpack/Character Tools)." })
 
 weaponDropdown = WeaponSec:AddDropdown("WeaponTool", {
 	Title = "Tool",
@@ -302,7 +285,9 @@ weaponDropdown = WeaponSec:AddDropdown("WeaponTool", {
 	Multi = false,
 	Default = 1,
 })
+
 WeaponSec:AddButton({ Title = "Equip Selected", Callback = function() equipSelectedTool() end })
+
 WeaponSec:AddToggle("AutoEquip", {
 	Title = "Auto Equip Selected",
 	Description = "Re-equips on respawn and when the tool returns to Backpack.",
@@ -312,47 +297,84 @@ WeaponSec:AddToggle("AutoEquip", {
 		if on then equipSelectedTool() end
 	end
 })
+
 WeaponSec:AddButton({ Title = "Refresh Tool List", Callback = function() refreshWeaponDropdown(true) end })
 
-local function hookToolListeners()
-	local bp = getBackpack()
+-- Tool listeners
+track(getBackpack().ChildAdded:Connect(function(c)
+	if c:IsA("Tool") then
+		refreshWeaponDropdown(true)
+		if state.autoEquip then task.defer(equipSelectedTool) end
+	end
+end))
 
-	track(bp.ChildAdded:Connect(function(c)
-		if c:IsA("Tool") then
-			refreshWeaponDropdown(true)
-			if state.autoEquip then task.defer(equipSelectedTool) end
-		end
+track(getBackpack().ChildRemoved:Connect(function(c)
+	if c:IsA("Tool") then
+		task.defer(function() refreshWeaponDropdown(true) end)
+	end
+end))
+
+track(LocalPlayer.CharacterAdded:Connect(function(char)
+	task.defer(function()
+		refreshWeaponDropdown(true)
+		if state.autoEquip then task.defer(equipSelectedTool) end
+	end)
+
+	track(char.ChildAdded:Connect(function(c)
+		if c:IsA("Tool") then refreshWeaponDropdown(true) end
 	end))
 
-	track(bp.ChildRemoved:Connect(function(c)
-		if c:IsA("Tool") then
-			task.defer(function() refreshWeaponDropdown(true) end)
-		end
+	track(char.ChildRemoved:Connect(function(c)
+		if c:IsA("Tool") then task.defer(function() refreshWeaponDropdown(true) end) end
 	end))
+end))
 
-	track(LocalPlayer.CharacterAdded:Connect(function(char)
-		task.defer(function()
-			refreshWeaponDropdown(true)
-			if state.autoEquip then task.defer(equipSelectedTool) end
-		end)
-
-		track(char.ChildAdded:Connect(function(c)
-			if c:IsA("Tool") then refreshWeaponDropdown(true) end
-		end))
-
-		track(char.ChildRemoved:Connect(function(c)
-			if c:IsA("Tool") then task.defer(function() refreshWeaponDropdown(true) end) end
-		end))
-	end))
-
-	if LocalPlayer.Character then task.defer(function() refreshWeaponDropdown(true) end) end
+--========================
+-- Alt Speed (No WalkSpeed) - velocity assist
+--========================
+local function getMoveDirection()
+	local char = LocalPlayer.Character
+	if not char then return Vector3.zero end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return Vector3.zero end
+	return hum.MoveDirection or Vector3.zero
 end
-hookToolListeners()
 
--- =========================================================
+track(RunService.Heartbeat:Connect(function()
+	if Fluent.Unloaded or state.terminated then return end
+	if not state.altSpeedEnabled then return end
+	if state.altSpeedBoost <= 0 then return end
+
+	local char = LocalPlayer.Character
+	if not char then return end
+
+	local root = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not root or not hum then return end
+	if hum.Health <= 0 then return end
+
+	local dir = getMoveDirection()
+	if dir.Magnitude < 0.05 then return end
+	dir = Vector3.new(dir.X, 0, dir.Z)
+	if dir.Magnitude < 0.05 then return end
+	dir = dir.Unit
+
+	local vel = root.AssemblyLinearVelocity
+	local horiz = Vector3.new(vel.X, 0, vel.Z)
+
+	local boosted = horiz + (dir * state.altSpeedBoost)
+	if boosted.Magnitude > state.altSpeedMaxVel then
+		boosted = boosted.Unit * state.altSpeedMaxVel
+	end
+
+	root.AssemblyLinearVelocity = Vector3.new(boosted.X, vel.Y, boosted.Z)
+end))
+
+--========================
 -- Fly
--- =========================================================
+--========================
 local flyBV, flyBG, flyConn
+
 local function stopFly()
 	state.fly = false
 	if flyConn then flyConn:Disconnect(); flyConn = nil end
@@ -397,9 +419,9 @@ local function startFly()
 	end)
 end
 
--- =========================================================
--- Infinite health loop (client-side)
--- =========================================================
+--========================
+-- Infinite health loop (client)
+--========================
 local infHealthTaskId = 0
 local function stopInfHealth()
 	state.infHealth = false
@@ -423,9 +445,7 @@ local function startInfHealth()
 	end)
 end
 
--- =========================================================
--- Follow: pause on YOUR death
--- =========================================================
+-- Pause follow on YOUR death (optional safety)
 local localDiedConn
 local function bindLocalDeath()
 	if localDiedConn then localDiedConn:Disconnect(); localDiedConn = nil end
@@ -437,25 +457,17 @@ local function bindLocalDeath()
 	end)
 	table.insert(connections, localDiedConn)
 end
-
-track(LocalPlayer.CharacterAdded:Connect(function()
-	stopFly()
-	if Fluent.Options.Fly then Fluent.Options.Fly:SetValue(false) end
-	state.followPaused = false
-	task.defer(bindLocalDeath)
-	if state.autoEquip then task.defer(equipSelectedTool) end
-	if state.infHealth then startInfHealth() end
-end))
 task.defer(bindLocalDeath)
 
--- =========================================================
--- Player tab UI
--- =========================================================
+--========================
+-- Player UI
+--========================
 PlayerSec:AddSlider("WalkSpeed", {
 	Title = "WalkSpeed",
 	Default = 16, Min = 0, Max = 250, Rounding = 0,
 	Callback = function(v) pcall(function() getHumanoid().WalkSpeed = v end) end
 })
+
 PlayerSec:AddSlider("JumpPower", {
 	Title = "JumpPower",
 	Default = 50, Min = 0, Max = 250, Rounding = 0,
@@ -463,36 +475,39 @@ PlayerSec:AddSlider("JumpPower", {
 })
 
 AltSpeedSec:AddToggle("AltSpeedEnabled", {
-	Title = "Speed",
-	Description = "Adds extra horizontal velocity while moving. Works even if the game resets WalkSpeed.",
+	Title = "Alt Speed Boost (No WalkSpeed)",
+	Description = "Adds extra horizontal velocity while moving (helps if game resets WalkSpeed).",
 	Default = false,
 	Callback = function(on) state.altSpeedEnabled = on end
 })
+
 AltSpeedSec:AddSlider("AltSpeedBoost", {
 	Title = "Boost Amount",
-	Description = "Extra studs/sec added while moving.",
 	Default = 0, Min = 0, Max = 150, Rounding = 0,
 	Callback = function(v) state.altSpeedBoost = v end
 })
+
 AltSpeedSec:AddSlider("AltSpeedMaxVel", {
-	Title = "Max Horizontal Velocity",
+	Title = "Max Horizontal Velocity (cap)",
 	Default = 120, Min = 20, Max = 300, Rounding = 0,
 	Callback = function(v) state.altSpeedMaxVel = v end
 })
 
 HealthSec:AddToggle("InfHealth", {
-	Title = "Infinite Health",
-	Description = "Infinite health on client. Other clients can bypass.",
+	Title = "Infinite Health (Loop)",
+	Description = "Client-side loop. Server damage may still override.",
 	Default = false,
 	Callback = function(on) if on then startInfHealth() else stopInfHealth() end end
 })
+
 HealthSec:AddSlider("InfHealthTarget", {
 	Title = "Health Target",
 	Default = 100, Min = 1, Max = 500, Rounding = 0,
 	Callback = function(v) state.infHealthTarget = v end
 })
+
 HealthSec:AddSlider("InfHealthRate", {
-	Title = "Loop Rate",
+	Title = "Loop Rate (sec)",
 	Default = 0.1, Min = 0.05, Max = 1, Rounding = 2,
 	Callback = function(v) state.infHealthRate = v end
 })
@@ -526,9 +541,9 @@ PlayerSec:AddButton({
 	end
 })
 
--- =========================================================
--- Movement tab UI + logic
--- =========================================================
+--========================
+-- Movement UI + logic
+--========================
 MoveSec:AddToggle("Noclip", { Title = "Noclip", Default = false, Callback = function(on) state.noclip = on end })
 MoveSec:AddToggle("InfiniteJump", { Title = "Infinite Jump", Default = false, Callback = function(on) state.infiniteJump = on end })
 
@@ -555,6 +570,7 @@ MoveSec:AddButton({
 			hum.WalkSpeed = 16
 			hum.JumpPower = 50
 		end)
+
 		if Fluent.Options.Noclip then Fluent.Options.Noclip:SetValue(false) end
 		if Fluent.Options.InfiniteJump then Fluent.Options.InfiniteJump:SetValue(false) end
 		if Fluent.Options.Fly then Fluent.Options.Fly:SetValue(false) end
@@ -565,7 +581,7 @@ MoveSec:AddButton({
 	end
 })
 
-UtilSec:AddButton({
+UtilMoveSec:AddButton({
 	Title = "Sit / Unsit",
 	Callback = function()
 		pcall(function()
@@ -591,22 +607,15 @@ track(RunService.Stepped:Connect(function()
 	end
 end))
 
--- =========================================================
--- TELEPORT TAB (Players + Follow)
--- =========================================================
-
-local TpSec = Tabs.Teleport:AddSection("Players")
-local FollowSec = Tabs.Teleport:AddSection("Follow")
-
--- =========================
--- TEAM FILTER
--- =========================
+--========================
+-- TELEPORT TAB (Players + Follow + Waypoints)  ✅ FULL
+--========================
 local TeamDropdown
 local TpDropdown
 
 local function getTeamNames()
 	local values = { "All" }
-	for _, team in ipairs(game:GetService("Teams"):GetChildren()) do
+	for _, team in ipairs(Teams:GetChildren()) do
 		if team:IsA("Team") then
 			table.insert(values, team.Name)
 		end
@@ -619,61 +628,130 @@ local function getTeamNames()
 	return values
 end
 
-local function getFilteredPlayers()
+local function getPlayerNamesFiltered()
+	local teamName = state.targetTeamFilter
+	if not isValidTeamName(teamName) then teamName = "All" end
 	local names = {}
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if playerMatchesTeam(plr, state.targetTeamFilter) then
-			table.insert(names, plr.Name)
+	for _, p in ipairs(Players:GetPlayers()) do
+		if playerMatchesTeam(p, teamName) then
+			table.insert(names, p.Name)
 		end
 	end
 	table.sort(names)
 	return names
 end
 
+local function refreshTeamDropdown(tryKeep)
+	if not TeamDropdown then return end
+	local current = Fluent.Options.TeamFilter and Fluent.Options.TeamFilter.Value or "All"
+	local values = getTeamNames()
+	TeamDropdown:SetValues(values)
+	if tryKeep and table.find(values, current) then
+		Fluent.Options.TeamFilter:SetValue(current)
+	else
+		Fluent.Options.TeamFilter:SetValue("All")
+	end
+end
+
+local function refreshTargetDropdown(tryKeepTarget)
+	if not TpDropdown then return end
+	local current = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
+	local values = getPlayerNamesFiltered()
+	TpDropdown:SetValues(values)
+	if tryKeepTarget and current and table.find(values, current) then
+		Fluent.Options.TPPlayer:SetValue(current)
+	elseif #values > 0 then
+		Fluent.Options.TPPlayer:SetValue(values[1])
+	end
+end
+
+local function getFollowablePlayersOrdered()
+	local teamName = state.targetTeamFilter
+	if not isValidTeamName(teamName) then teamName = "All" end
+
+	local list = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer and playerMatchesTeam(p, teamName) then
+			table.insert(list, p.Name)
+		end
+	end
+	table.sort(list)
+	return list
+end
+
+local function pickNextName(currentName)
+	local list = getFollowablePlayersOrdered()
+	if #list == 0 then return nil end
+	if not currentName then return list[1] end
+	local idx
+	for i, name in ipairs(list) do
+		if name == currentName then idx = i break end
+	end
+	if not idx then return list[1] end
+	local nextIdx = idx + 1
+	if nextIdx > #list then nextIdx = 1 end
+	return list[nextIdx]
+end
+
+local function setTargetDropdown(name)
+	if not name then return end
+	if Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.SetValue then
+		Fluent.Options.TPPlayer:SetValue(name)
+	end
+end
+
+-- Players UI
 TeamDropdown = TpSec:AddDropdown("TeamFilter", {
 	Title = "Team Filter",
+	Description = "Target list will only show players on this team.",
 	Values = getTeamNames(),
 	Multi = false,
-	Default = 1
+	Default = 1,
 })
 
 TeamDropdown:OnChanged(function(val)
+	if type(val) ~= "string" then return end
+	if not isValidTeamName(val) then val = "All" end
 	state.targetTeamFilter = val
-	if TpDropdown then
-		TpDropdown:SetValues(getFilteredPlayers())
-	end
+	refreshTargetDropdown(false)
 end)
 
--- =========================
--- TARGET DROPDOWN
--- =========================
 TpDropdown = TpSec:AddDropdown("TPPlayer", {
-	Title = "Target Player",
-	Values = getFilteredPlayers(),
+	Title = "Target",
+	Values = getPlayerNamesFiltered(),
 	Multi = false,
-	Default = 1
+	Default = 1,
 })
 
-Players.PlayerAdded:Connect(function()
-	TpDropdown:SetValues(getFilteredPlayers())
-end)
+track(Teams.ChildAdded:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
+track(Teams.ChildRemoved:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
+track(Players.PlayerAdded:Connect(function() refreshTargetDropdown(true) end))
+track(Players.PlayerRemoving:Connect(function() refreshTargetDropdown(true) end))
 
-Players.PlayerRemoving:Connect(function()
-	TpDropdown:SetValues(getFilteredPlayers())
-end)
+local teamConns = {}
+local function hookTeamChange(plr)
+	if teamConns[plr] then teamConns[plr]:Disconnect() end
+	teamConns[plr] = plr:GetPropertyChangedSignal("Team"):Connect(function()
+		if Fluent.Unloaded or state.terminated then return end
+		refreshTargetDropdown(true)
+	end)
+end
+for _, p in ipairs(Players:GetPlayers()) do hookTeamChange(p) end
+track(Players.PlayerAdded:Connect(hookTeamChange))
+track(Players.PlayerRemoving:Connect(function(plr)
+	if teamConns[plr] then teamConns[plr]:Disconnect(); teamConns[plr] = nil end
+end))
 
--- =========================
--- TELEPORT BUTTON
--- =========================
 TpSec:AddButton({
-	Title = "Teleport to Player",
+	Title = "Teleport",
 	Callback = function()
-		local name = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-		local plr = name and Players:FindFirstChild(name)
-		if not plr or plr == LocalPlayer then return end
-		if not playerMatchesTeam(plr, state.targetTeamFilter) then return end
+		local targetName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
+		if type(targetName) ~= "string" then return end
+		local target = Players:FindFirstChild(targetName)
+		if not target or target == LocalPlayer then return end
+		if not playerMatchesTeam(target, state.targetTeamFilter) then return end
 
-		local theirRoot = getRootOf(plr)
+		local theirRoot = getRootOf(target)
 		if not theirRoot then return end
 
 		getRoot().CFrame = theirRoot.CFrame * CFrame.new(0, 0, 3)
@@ -681,106 +759,103 @@ TpSec:AddButton({
 	end
 })
 
--- =========================================================
--- FOLLOW SYSTEM (TP once → then smooth follow)
--- =========================================================
-
+--========================
+-- Follow (TP once on start/switch, then smooth follow)
+--========================
 local followDiedConn
 local followAcc = 0
 
-local function disconnectFollowDeath()
+local function disconnectFollowDied()
 	if followDiedConn then
 		followDiedConn:Disconnect()
 		followDiedConn = nil
 	end
 end
 
-local function teleportBehindTarget(plr)
-	local theirRoot = getRootOf(plr)
-	if not theirRoot then return false end
-
-	local myRoot = getRoot()
-	if not myRoot then return false end
-
-	myRoot.CFrame =
-		theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
-	return true
-end
-
 local function getCurrentTarget()
 	local name = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-	if not name then return nil end
+	if type(name) ~= "string" or name == "" then return nil end
 	local plr = Players:FindFirstChild(name)
 	if not plr or plr == LocalPlayer then return nil end
 	if not playerMatchesTeam(plr, state.targetTeamFilter) then return nil end
 	return plr
 end
 
-function switchToNextTarget()
-	local nextName = pickNextName(Fluent.Options.TPPlayer.Value)
-	if not nextName then
-		state.followEnabled = false
-		if Fluent.Options.FollowToggle then
-			Fluent.Options.FollowToggle:SetValue(false)
-		end
-		disconnectFollowDeath()
-		return
-	end
+local function teleportBehindTarget(targetPlr)
+	if not targetPlr then return false end
+	local theirRoot = getRootOf(targetPlr)
+	if not theirRoot then return false end
 
-	setTargetDropdown(nextName)
+	local myRoot = getRoot()
+	if not myRoot then return false end
 
-	local plr = Players:FindFirstChild(nextName)
-	if plr then
-		teleportBehindTarget(plr)
-		maybeEquipAfterAction()
-		bindDeathToTarget(plr)
-	end
+	myRoot.CFrame = theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
+	return true
 end
 
-function bindDeathToTarget(plr)
-	disconnectFollowDeath()
+local function bindDeathListenerForTarget(plr)
+	disconnectFollowDied()
+	if not plr then return end
 	local hum = getHumanoidOf(plr)
 	if not hum then return end
 
 	followDiedConn = hum.Died:Connect(function()
 		if state.followEnabled then
-			switchToNextTarget()
+			-- switch to next valid target, TP once, continue follow
+			local currentName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
+			local nextName = pickNextName(currentName)
+			if not nextName then
+				state.followEnabled = false
+				state.followPaused = false
+				if Fluent.Options.FollowToggle then Fluent.Options.FollowToggle:SetValue(false) end
+				disconnectFollowDied()
+				return
+			end
+
+			setTargetDropdown(nextName)
+			local nextPlr = Players:FindFirstChild(nextName)
+			if nextPlr then
+				teleportBehindTarget(nextPlr)
+				maybeEquipAfterAction()
+				bindDeathListenerForTarget(nextPlr)
+			end
 		end
 	end)
 end
 
--- =========================
--- FOLLOW UI
--- =========================
 FollowSec:AddToggle("FollowToggle", {
-	Title = "Follow Player",
+	Title = "Follow Target",
 	Default = false,
 	Callback = function(on)
 		state.followEnabled = on
+		state.followPaused = false
 		followAcc = 0
 
 		if not on then
-			disconnectFollowDeath()
+			disconnectFollowDied()
 			return
 		end
 
+		-- On start: TP once, then follow smoothly
 		local target = getCurrentTarget()
 		if not target then
-			switchToNextTarget()
-			target = getCurrentTarget()
+			-- pick first valid target
+			local nextName = pickNextName(nil)
+			if nextName then
+				setTargetDropdown(nextName)
+				target = Players:FindFirstChild(nextName)
+			end
 		end
 
 		if not target then
 			state.followEnabled = false
-			if Fluent.Options.FollowToggle then
-				Fluent.Options.FollowToggle:SetValue(false)
-			end
+			if Fluent.Options.FollowToggle then Fluent.Options.FollowToggle:SetValue(false) end
 			return
 		end
 
 		teleportBehindTarget(target)
 		maybeEquipAfterAction()
-		bindDeathToTarget(target)
+		bindDeathListenerForTarget(target)
 	end
 })
 
@@ -813,77 +888,92 @@ FollowSec:AddSlider("FollowRate", {
 })
 
 FollowSec:AddToggle("EquipOnTPFollow", {
-	Title = "Equip weapon on TP / Follow",
+	Title = "Equip selected weapon on TP/Follow",
 	Default = false,
-	Callback = function(on)
-		state.equipOnFollowOrTP = on
-	end
+	Callback = function(on) state.equipOnFollowOrTP = on end
 })
 
 FollowSec:AddButton({
 	Title = "Stop Follow",
 	Callback = function()
 		state.followEnabled = false
-		disconnectFollowDeath()
-		if Fluent.Options.FollowToggle then
-			Fluent.Options.FollowToggle:SetValue(false)
-		end
+		state.followPaused = false
+		disconnectFollowDied()
+		if Fluent.Options.FollowToggle then Fluent.Options.FollowToggle:SetValue(false) end
 	end
 })
 
--- =========================
--- FOLLOW LOOP (smooth, no snap)
--- =========================
-track(RunService.RenderStepped:Connect(function(dt)
+-- If you manually change target while following, TP once behind the new target
+TpDropdown:OnChanged(function()
 	if not state.followEnabled then return end
+	local target = getCurrentTarget()
+	if target then
+		teleportBehindTarget(target)
+		maybeEquipAfterAction()
+		bindDeathListenerForTarget(target)
+	end
+end)
+
+-- Smooth follow loop (AFTER initial TP)
+track(RunService.RenderStepped:Connect(function(dt)
+	if Fluent.Unloaded or state.terminated then return end
+	if not state.followEnabled then return end
+	if state.followPaused then return end
 
 	followAcc += dt
 	if followAcc < state.followUpdateRate then return end
 	followAcc = 0
 
 	local target = getCurrentTarget()
-	if not target then
-		switchToNextTarget()
-		return
-	end
+	if not target then return end
 
 	local theirRoot = getRootOf(target)
 	local myRoot = getRoot()
-	if not theirRoot or not myRoot then
-		switchToNextTarget()
-		return
-	end
+	if not theirRoot or not myRoot then return end
 
-	local desired =
-		theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
-
+	local desired = theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
 	local alpha = 1 - math.exp(-state.followSmoothness * dt)
 	myRoot.CFrame = myRoot.CFrame:Lerp(desired, alpha)
 end))
 
--- =========================================================
--- Waypoints (save + export/import code for cross-server use)
--- =========================================================
-local SavedDropdown = SavedSec:AddDropdown("SavedPos", { Title = "Waypoints", Values = {}, Multi = false })
-SavedSec:AddInput("SaveName", { Title = "Waypoint Name", Default = "", Placeholder = "Spawn / Shop / etc", Callback = function() end })
+--========================
+-- Waypoints (Teleport tab)
+--========================
+local SavedDropdown = WaypointSec:AddDropdown("SavedPos", {
+	Title = "Waypoints",
+	Values = {},
+	Multi = false
+})
+
+WaypointSec:AddInput("SaveName", {
+	Title = "Waypoint Name",
+	Default = "",
+	Placeholder = "Spawn / Shop / etc",
+	Callback = function() end
+})
 
 local function refreshSavedDropdown()
 	local values = {}
-	for _, item in ipairs(state.savedPositions) do table.insert(values, item.Name) end
+	for _, item in ipairs(state.savedPositions) do
+		table.insert(values, item.Name)
+	end
 	SavedDropdown:SetValues(values)
 end
 
-SavedSec:AddButton({
+WaypointSec:AddButton({
 	Title = "Save Current Position",
 	Callback = function()
 		local name = Fluent.Options.SaveName and Fluent.Options.SaveName.Value
-		if type(name) ~= "string" or name:gsub("%s+", "") == "" then return end
+		if type(name) ~= "string" or name:gsub("%s+", "") == "" then
+			Fluent:Notify({ Title = "Waypoints", Content = "Enter a name first.", Duration = 3 })
+			return
+		end
 		table.insert(state.savedPositions, { Name = name, CFrame = getRoot().CFrame })
 		refreshSavedDropdown()
 	end
 })
 
-SavedSec:AddButton({
+WaypointSec:AddButton({
 	Title = "Teleport to Waypoint",
 	Callback = function()
 		local pick = Fluent.Options.SavedPos and Fluent.Options.SavedPos.Value
@@ -893,10 +983,11 @@ SavedSec:AddButton({
 				return
 			end
 		end
+		Fluent:Notify({ Title = "Waypoints", Content = "No waypoint selected.", Duration = 3 })
 	end
 })
 
-SavedSec:AddButton({
+WaypointSec:AddButton({
 	Title = "Delete Selected Waypoint",
 	Callback = function()
 		local pick = Fluent.Options.SavedPos and Fluent.Options.SavedPos.Value
@@ -911,15 +1002,28 @@ SavedSec:AddButton({
 	end
 })
 
-SavedSec:AddButton({ Title = "Clear All Waypoints", Callback = function() state.savedPositions = {}; refreshSavedDropdown() end })
+WaypointSec:AddButton({
+	Title = "Clear All Waypoints",
+	Callback = function()
+		state.savedPositions = {}
+		refreshSavedDropdown()
+	end
+})
+
+-- Export/Import code (manual persistence across servers in SAME game)
+WaypointSec:AddInput("WaypointCode", {
+	Title = "Waypoint Code",
+	Description = "Export/Import manually (same place).",
+	Default = "",
+	Placeholder = "Paste waypoint code here...",
+	Finished = false,
+	Callback = function() end
+})
 
 local function serializeWaypoints()
 	local out = { placeId = game.PlaceId, waypoints = {} }
 	for _, w in ipairs(state.savedPositions) do
-		table.insert(out.waypoints, {
-			name = w.Name,
-			cf = { w.CFrame:GetComponents() } -- 12 numbers
-		})
+		table.insert(out.waypoints, { name = w.Name, cf = { w.CFrame:GetComponents() } })
 	end
 	return HttpService:JSONEncode(out)
 end
@@ -927,12 +1031,8 @@ end
 local function deserializeWaypoints(json)
 	local ok, data = pcall(function() return HttpService:JSONDecode(json) end)
 	if not ok or type(data) ~= "table" then return false, "Invalid JSON" end
-	if data.placeId ~= game.PlaceId then
-		return false, "Waypoint code is for a different placeId"
-	end
-	if type(data.waypoints) ~= "table" then
-		return false, "Missing waypoints"
-	end
+	if data.placeId ~= game.PlaceId then return false, "Code is for a different placeId" end
+	if type(data.waypoints) ~= "table" then return false, "Missing waypoints" end
 
 	local newList = {}
 	for _, it in ipairs(data.waypoints) do
@@ -942,21 +1042,13 @@ local function deserializeWaypoints(json)
 			table.insert(newList, { Name = it.name, CFrame = cf })
 		end
 	end
+
 	state.savedPositions = newList
 	refreshSavedDropdown()
 	return true
 end
 
-SavedSec:AddInput("WaypointCode", {
-	Title = "Waypoint Code",
-	Description = "Export/Import so waypoints can be reused in different servers.",
-	Default = "",
-	Placeholder = "Paste waypoint code here...",
-	Finished = false,
-	Callback = function() end
-})
-
-SavedSec:AddButton({
+WaypointSec:AddButton({
 	Title = "Export Waypoints",
 	Callback = function()
 		local code = serializeWaypoints()
@@ -965,14 +1057,14 @@ SavedSec:AddButton({
 		end
 		if typeof(setclipboard) == "function" then
 			pcall(function() setclipboard(code) end)
-			Fluent:Notify({ Title = "Waypoints", Content = "Exported and copied to clipboard", Duration = 3 })
+			Fluent:Notify({ Title = "Waypoints", Content = "Exported + copied to clipboard.", Duration = 3 })
 		else
-			Fluent:Notify({ Title = "Waypoints", Content = "Exported you must copy the code from the input box.", Duration = 4 })
+			Fluent:Notify({ Title = "Waypoints", Content = "Exported. Copy the code from the input box.", Duration = 4 })
 		end
 	end
 })
 
-SavedSec:AddButton({
+WaypointSec:AddButton({
 	Title = "Import Waypoints",
 	Callback = function()
 		local code = Fluent.Options.WaypointCode and Fluent.Options.WaypointCode.Value
@@ -986,9 +1078,9 @@ SavedSec:AddButton({
 	end
 })
 
--- =========================================================
--- Visual tab: Fullbright + Freecam
--- =========================================================
+--========================
+-- Visual: Fullbright + Freecam
+--========================
 local function setFullbright(on)
 	if on then
 		if not state.storedLighting then
@@ -1007,12 +1099,18 @@ local function setFullbright(on)
 		Lighting.FogEnd = 1e9
 	else
 		if state.storedLighting then
-			for k, v in pairs(state.storedLighting) do Lighting[k] = v end
+			for k, v in pairs(state.storedLighting) do
+				Lighting[k] = v
+			end
 		end
 	end
 end
 
-VisualSec:AddToggle("Fullbright", { Title = "Fullbright", Default = false, Callback = function(on) setFullbright(on) end })
+VisualSec:AddToggle("Fullbright", {
+	Title = "Fullbright",
+	Default = false,
+	Callback = function(on) setFullbright(on) end
+})
 
 -- Freecam
 local freecamConn
@@ -1024,7 +1122,6 @@ local function stopFreecam()
 	state.freecamEnabled = false
 	if freecamConn then freecamConn:Disconnect(); freecamConn = nil end
 	UIS.MouseBehavior = Enum.MouseBehavior.Default
-
 	if oldCam.Type then Camera.CameraType = oldCam.Type end
 	if oldCam.Subject then Camera.CameraSubject = oldCam.Subject end
 	if oldCam.CFrame then Camera.CFrame = oldCam.CFrame end
@@ -1051,9 +1148,7 @@ local function startFreecam()
 		local speed = state.freecamSpeed
 		if UIS:IsKeyDown(Enum.KeyCode.LeftShift) then speed *= state.freecamFastMult end
 
-		local forward = 0
-		local right = 0
-		local up = 0
+		local forward, right, up = 0, 0, 0
 		if UIS:IsKeyDown(Enum.KeyCode.W) then forward += 1 end
 		if UIS:IsKeyDown(Enum.KeyCode.S) then forward -= 1 end
 		if UIS:IsKeyDown(Enum.KeyCode.D) then right += 1 end
@@ -1075,7 +1170,6 @@ local function startFreecam()
 		freecamPos += (basis.RightVector * move.X) + (Vector3.new(0,1,0) * move.Y) + (basis.LookVector * move.Z)
 		Camera.CFrame = CFrame.new(freecamPos) * rotCF
 	end)
-
 	table.insert(connections, freecamConn)
 end
 
@@ -1106,9 +1200,9 @@ FreecamSec:AddButton({
 	end
 })
 
--- =========================================================
--- ESP + Tracers + Hitboxes
--- =========================================================
+--========================
+-- ESP + Hitboxes (same as before)
+--========================
 local espFolder = Instance.new("Folder")
 espFolder.Name = "AdminESP"
 espFolder.Parent = Workspace
@@ -1132,7 +1226,6 @@ end
 
 local function ensureBillboard(plr)
 	if billboardsByPlayer[plr] then return billboardsByPlayer[plr] end
-
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "ESPLabel_" .. plr.Name
 	bb.Size = UDim2.fromOffset(280, 54)
@@ -1156,7 +1249,6 @@ end
 
 local function ensureTracer(plr)
 	if tracersByPlayer[plr] then return tracersByPlayer[plr] end
-
 	local beam = Instance.new("Beam")
 	beam.Name = "Tracer_" .. plr.Name
 	beam.Width0 = 0.08
@@ -1232,7 +1324,6 @@ local function startESP()
 			local h = ensureHighlight(plr)
 			h.Adornee = plr.Character
 
-			-- label
 			if state.espShowNames or state.espShowDistance or state.espShowHealth or state.espShowTeam then
 				local bb = ensureBillboard(plr)
 				bb.Adornee = root
@@ -1256,7 +1347,6 @@ local function startESP()
 				if billboardsByPlayer[plr] then billboardsByPlayer[plr]:Destroy(); billboardsByPlayer[plr] = nil end
 			end
 
-			-- tracers
 			if state.espTracers then
 				local tr = ensureTracer(plr)
 				tr.A0.Parent = localRoot
@@ -1284,15 +1374,14 @@ EspSec:AddToggle("ESPEnabled", {
 	end
 })
 
-EspSec:AddToggle("ESPNames", { Title = "Show Names", Default = true, Callback = function(on) state.espShowNames = on end })
-EspSec:AddToggle("ESPTeam",  { Title = "Show Team", Default = true, Callback = function(on) state.espShowTeam = on end })
-EspSec:AddToggle("ESPHealth",{ Title = "Show Health", Default = true, Callback = function(on) state.espShowHealth = on end })
-EspSec:AddToggle("ESPDistance", { Title = "Show Distance", Default = true, Callback = function(on) state.espShowDistance = on end })
-EspSec:AddToggle("ESPTeamCheck", { Title = "Team Check", Default = false, Callback = function(on) state.espTeamCheck = on end })
+EspSec:AddToggle("ESPNames",    { Title = "Show Names",    Default = true,  Callback = function(on) state.espShowNames = on end })
+EspSec:AddToggle("ESPTeam",     { Title = "Show Team",     Default = true,  Callback = function(on) state.espShowTeam = on end })
+EspSec:AddToggle("ESPHealth",   { Title = "Show Health",   Default = true,  Callback = function(on) state.espShowHealth = on end })
+EspSec:AddToggle("ESPDistance", { Title = "Show Distance", Default = true,  Callback = function(on) state.espShowDistance = on end })
+EspSec:AddToggle("ESPTeamCheck",{ Title = "Team Check",    Default = false, Callback = function(on) state.espTeamCheck = on end })
 
 EspSec:AddToggle("ESPTracers", {
 	Title = "Tracers",
-	Description = "Draws a beam from you to each ESP player.",
 	Default = false,
 	Callback = function(on) state.espTracers = on end
 })
@@ -1312,20 +1401,7 @@ EspSec:AddSlider("ESPRefresh", {
 	Callback = function(v) state.espRefreshRate = v end
 })
 
-EspSec:AddButton({
-	Title = "Clear ESP Objects",
-	Callback = function()
-		stopESP()
-		if state.espEnabled then startESP() end
-	end
-})
-
-track(Players.PlayerRemoving:Connect(function(plr) cleanupESPPlayer(plr) end))
-track(LocalPlayer.CharacterAdded:Connect(function()
-	if state.espEnabled then stopESP(); startESP() end
-end))
-
--- Hitbox expander (local-only)
+-- Hitboxes
 local originalHitboxes = {} -- [plr] = {Size=Vector3, Trans=number}
 
 local function applyHitbox(plr)
@@ -1360,7 +1436,6 @@ end
 
 HitboxSec:AddToggle("HitboxEnabled", {
 	Title = "Hitbox Toggle",
-	Description = "Local-only HRP hitbox size change for visibility/testing.",
 	Default = false,
 	Callback = function(on)
 		state.hitboxEnabled = on
@@ -1386,24 +1461,13 @@ HitboxSec:AddSlider("HitboxTransparency", {
 	end
 })
 
-track(Players.PlayerAdded:Connect(function(plr)
-	track(plr.CharacterAdded:Connect(function()
-		task.wait(0.25)
-		if state.hitboxEnabled then applyHitbox(plr) end
-	end))
-end))
-
-track(Players.PlayerRemoving:Connect(function(plr)
-	restoreHitbox(plr)
-end))
-
--- =========================================================
--- Utility tab: Serverhopping (no detection; will error if LocalScript)
--- =========================================================
+--========================
+-- Utility: Serverhop (no detection; errors if LocalScript)
+--========================
 local function fetchPublicServers(limit)
 	limit = math.clamp(limit or 100, 10, 100)
 	local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=2&limit=%d"):format(game.PlaceId, limit)
-	local res = HttpService:GetAsync(url) -- will fail in normal LocalScript
+	local res = HttpService:GetAsync(url)
 	return HttpService:JSONDecode(res)
 end
 
@@ -1459,7 +1523,7 @@ end
 
 ServerSec:AddParagraph({
 	Title = "Serverhop",
-	Content = "Attempts client HTTP. Works only in environments that support HttpService:GetAsync() on client."
+	Content = "Uses client HttpService:GetAsync(). Works only where client HTTP is supported."
 })
 
 ServerSec:AddButton({
@@ -1474,20 +1538,12 @@ ServerSec:AddButton({
 	end
 })
 
-ServerSec:AddButton({
-	Title = "Server Hop (Random)",
-	Callback = function() serverhop("random") end
-})
+ServerSec:AddButton({ Title = "Server Hop (Random)", Callback = function() serverhop("random") end })
+ServerSec:AddButton({ Title = "Server Hop (Least Players)", Callback = function() serverhop("least") end })
 
-ServerSec:AddButton({
-	Title = "Server Hop (Least Players)",
-	Callback = function() serverhop("least") end
-})
-
-
--- =========================================================
--- Terminate: reset everything + close UI
--- =========================================================
+--========================
+-- Terminate (reset everything + close UI)
+--========================
 local function terminateAll()
 	if state.terminated then return end
 	state.terminated = true
@@ -1512,33 +1568,31 @@ local function terminateAll()
 		restoreHitbox(plr)
 	end
 
-	-- stop esp
+	-- stop esp + cleanup
 	pcall(stopESP)
-
-	-- destroy ESP folder
 	pcall(function()
 		if espFolder then espFolder:Destroy() end
 	end)
 
-	-- disconnect everything we tracked
+	-- disconnect
 	for _, c in ipairs(connections) do
 		pcall(function() c:Disconnect() end)
 	end
 	table.clear(connections)
 
-	-- hard destroy Fluent
+	-- destroy UI
 	pcall(function()
 		Fluent:Destroy()
 	end)
 end
 
 TerminateSec:AddButton({
-	Title = "Terminate",
+	Title = "TERMINATE (Reset + Close UI)",
 	Description = "Resets all toggles/features and destroys the UI.",
 	Callback = function()
 		Window:Dialog({
 			Title = "Terminate",
-			Content = "This will reset everything and close the UI. Continue?",
+			Content = "This will reset EVERYTHING and close the UI. Continue?",
 			Buttons = {
 				{ Title = "Confirm", Callback = function() terminateAll() end },
 				{ Title = "Cancel", Callback = function() end }
@@ -1547,17 +1601,18 @@ TerminateSec:AddButton({
 	end
 })
 
--- =========================================================
+--========================
 -- Settings tab (InterfaceManager + SaveManager ONLY)
--- =========================================================
+--========================
 SaveManager:SetLibrary(Fluent)
 InterfaceManager:SetLibrary(Fluent)
 InterfaceManager:BuildInterfaceSection(Tabs.Settings)
 SaveManager:BuildConfigSection(Tabs.Settings)
 SaveManager:LoadAutoloadConfig()
 
--- Initial refresh
+-- Initial refresh (so dropdowns show something)
 task.defer(function()
+	refreshWeaponDropdown(true)
 	refreshTeamDropdown(true)
 	refreshTargetDropdown(true)
 	refreshSavedDropdown()
