@@ -722,6 +722,39 @@ TpDropdown = TpSec:AddDropdown("TPPlayer", {
 	Multi = false,
 	Default = 1,
 })
+TpSec:AddButton({
+	Title = "Next Player (Teleport)",
+	Description = "Cycles to the next player in the filtered list. If Follow is on, it also switches follow target.",
+	Callback = function()
+		local currentName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
+		local nextName = pickNextName(currentName)
+
+		if not nextName then
+			Fluent:Notify({ Title = "Teleport", Content = "No valid players in this filter.", Duration = 3 })
+			return
+		end
+
+		-- Update dropdown (this triggers the TP dropdown OnChanged too, but we still TP here for reliability)
+		setTargetDropdown(nextName)
+
+		local target = Players:FindFirstChild(nextName)
+		if not target then return end
+
+		if state.followEnabled then
+			-- Follow mode: TP once behind target and rebind death listener
+			teleportBehindTarget(target)
+			maybeEquipAfterAction()
+			bindDeathListenerForTarget(target)
+		else
+			-- Normal TP: teleport near them
+			local theirRoot = getRootOf(target)
+			if not theirRoot then return end
+			getRoot().CFrame = theirRoot.CFrame * CFrame.new(0, 0, 3)
+			maybeEquipAfterAction()
+		end
+	end
+})
+
 
 track(Teams.ChildAdded:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
 track(Teams.ChildRemoved:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
