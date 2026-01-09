@@ -1,9 +1,11 @@
 --========================
+-- Rayfield Admin Panel (Fluent-style sections + safer slider caps)
+--========================
+
+--========================
 -- Imports
 --========================
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
-local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 --========================
 -- Services
@@ -23,6 +25,37 @@ local Camera = Workspace.CurrentCamera
 --========================
 -- Helpers
 --========================
+
+local function setRFLabel(labelObj, text)
+	if not labelObj then return end
+	text = tostring(text or "")
+
+	-- Most Rayfield builds
+	if type(labelObj) == "table" and type(labelObj.Set) == "function" then
+		pcall(function() labelObj:Set(text) end)
+		return
+	end
+
+	-- Some forks expose Update/Refresh
+	if type(labelObj) == "table" and type(labelObj.Update) == "function" then
+		pcall(function() labelObj:Update(text) end)
+		return
+	end
+	if type(labelObj) == "table" and type(labelObj.Refresh) == "function" then
+		pcall(function() labelObj:Refresh(text) end)
+		return
+	end
+
+	-- Rare case where it’s an actual Instance
+	if typeof(labelObj) == "Instance" and labelObj:IsA("TextLabel") then
+		labelObj.Text = text
+	end
+end
+
+-- Ensure state exists early (prevents nil indexing anywhere)
+local state = _G.__ADMIN_STATE or {}
+_G.__ADMIN_STATE = state
+
 local function getChar()
 	return LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 end
@@ -69,138 +102,279 @@ local function track(conn)
 	return conn
 end
 
+-- Rayfield dropdown method compatibility
+local function dropdownSetValues(dd, values)
+	if not dd or type(values) ~= "table" then return end
+	pcall(function()
+		if dd.Refresh then dd:Refresh(values) return end
+		if dd.Update then dd:Update(values) return end
+		if dd.SetOptions then dd:SetOptions(values) return end
+		if dd.Set then dd:Set(values) return end
+		if dd.SetValues then dd:SetValues(values) return end
+	end)
+end
+
+local function dropdownSetCurrent(dd, val)
+	if not dd then return end
+	pcall(function()
+		if dd.Set then dd:Set(val) return end
+		if dd.SetCurrentOption then dd:SetCurrentOption(val) return end
+		if dd.SetValue then dd:SetValue(val) return end
+	end)
+end
+
+-- Fluent-like section headers for Rayfield
+local function Header(tab, title)
+	tab:CreateSection(tostring(title or ""))
+end
+
+local function notify(title, message, duration, force)
+	if state and state.disableNotifications and not force then return end
+	Rayfield:Notify({
+		Title = title or "Notice",
+		Content = message or "",
+		Duration = duration or 3,
+		Image = "info",
+	})
+end
+
+local function getRayfieldGui()
+	local cg = game:GetService("CoreGui")
+	for _, v in ipairs(cg:GetChildren()) do
+		if v:IsA("ScreenGui") and (v.Name:lower():find("rayfield") or v:FindFirstChild("Rayfield")) then
+			return v
+		end
+	end
+	return nil
+end
+
+local function setRayfieldScale(scale)
+	scale = math.clamp(tonumber(scale) or 1, 0.7, 1.5)
+	local gui = getRayfieldGui()
+	if not gui then return false end
+
+	-- Try to apply UIScale to first root frame we can find
+	for _, d in ipairs(gui:GetDescendants()) do
+		if d:IsA("Frame") then
+			local s = d:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
+			s.Scale = scale
+			s.Parent = d
+			state.uiScale = scale
+			return true
+		end
+	end
+	return false
+end
+
+local function findSpawnCFrame()
+	local char = LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
+	-- Prefer SpawnLocation
+	local spawns = {}
+	for _, inst in ipairs(Workspace:GetDescendants()) do
+		if inst:IsA("SpawnLocation") then
+			table.insert(spawns, inst)
+		end
+	end
+	if #spawns > 0 then
+		-- choose nearest spawn to you if possible
+		if hrp then
+			table.sort(spawns, function(a,b)
+				return (a.Position-hrp.Position).Magnitude < (b.Position-hrp.Position).Magnitude
+			end)
+		end
+		return spawns[1].CFrame + Vector3.new(0, 5, 0)
+	end
+
+	-- Fallback: "Spawn" parts commonly used
+	for _, inst in ipairs(Workspace:GetDescendants()) do
+		if inst:IsA("BasePart") and inst.Name:lower():find("spawn") then
+			return inst.CFrame + Vector3.new(0, 5, 0)
+		end
+	end
+
+	return nil
+end
+
+local function getMouseHitCFrame(maxDist)
+	maxDist = maxDist or 5000
+	local mouse = LocalPlayer:GetMouse()
+	local origin = Camera.CFrame.Position
+	local dir = (mouse.Hit.Position - origin)
+	if dir.Magnitude < 1 then dir = Camera.CFrame.LookVector * maxDist end
+	dir = dir.Unit * maxDist
+
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Blacklist
+	params.FilterDescendantsInstances = { LocalPlayer.Character }
+
+	local res = Workspace:Raycast(origin, dir, params)
+	if res then
+		return CFrame.new(res.Position + Vector3.new(0, 3, 0))
+	end
+	return CFrame.new(origin + dir)
+end
+
 --========================
 -- Window
 --========================
+
 local MINIMIZE_KEY = Enum.KeyCode.RightShift
 
-local Window = Fluent:CreateWindow({
-	Title = "All Games",
-	SubTitle = "Script Hub",
-	TabWidth = 160,
-	Size = UDim2.fromOffset(720, 600),
-	Acrylic = true,
-	Theme = "Darker",
-	MinimizeKey = MINIMIZE_KEY
+local Window = Rayfield:CreateWindow({
+	Name = "All Games - Script Hub",
+	LoadingTitle = "All Games",
+	LoadingSubtitle = "Rayfield UI",
+	ConfigurationSaving = {
+		Enabled = true,
+		FolderName = "AllGamesHub",
+		FileName = "Config"
+	},
+	KeySystem = false
 })
 
-track(UIS.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	if Fluent.Unloaded then return end
-	if input.KeyCode == MINIMIZE_KEY then
-		Window:Minimize()
-	end
+track(UIS.InputBegan:Connect(function(input, gp)
+	if gp then return end
+	if input.KeyCode ~= MINIMIZE_KEY then return end
+	pcall(function() Rayfield:Toggle() end)
+	pcall(function() Rayfield:ToggleUI() end)
+	pcall(function() Window:Toggle() end)
 end))
 
 --========================
 -- Tabs
 --========================
 local Tabs = {
-	Player   = Window:AddTab({ Title = "Player",   Icon = "user" }),
-	Movement = Window:AddTab({ Title = "Movement", Icon = "activity" }),
-	Teleport = Window:AddTab({ Title = "Teleport", Icon = "map-pin" }),
-	Visual   = Window:AddTab({ Title = "Visual",   Icon = "sun" }),
-	ESP      = Window:AddTab({ Title = "ESP",      Icon = "eye" }),
-	Utility  = Window:AddTab({ Title = "Utility",  Icon = "wrench" }),
-	Settings = Window:AddTab({ Title = "Settings", Icon = "settings" }),
+	Player   = Window:CreateTab("Player",   10747373176),
+	Movement = Window:CreateTab("Movement", 10747382750),
+	Teleport = Window:CreateTab("Teleport", 10734886202),
+	Visual   = Window:CreateTab("Visual",   10723415040),
+	ESP      = Window:CreateTab("ESP",      10723346959),
+	Utility  = Window:CreateTab("Utility",  10747383470),
+	Settings = Window:CreateTab("Settings", 10734950309),
 }
 
 --========================
 -- State
 --========================
-local state = {
+state = {
 	-- movement
-	noclip = false,
-	infiniteJump = false,
-	fly = false,
-	flySpeed = 60,
+	noclip = state.noclip or false,
+	infiniteJump = state.infiniteJump or false,
+	fly = state.fly or false,
+	flySpeed = state.flySpeed or 60,
 
 	-- lighting
-	storedLighting = nil,
+	storedLighting = state.storedLighting,
 
 	-- waypoints
-	savedPositions = {}, -- {Name=string, CFrame=CFrame}
+	savedPositions = state.savedPositions or {},
 
 	-- ESP
-	espEnabled = false,
-	espShowNames = true,
-	espShowDistance = true,
-	espShowHealth = true,
-	espShowTeam = true,
-	espTeamCheck = false,
-	espMaxDistance = 1500,
-	espRefreshRate = 0.15,
-	espTracers = false,
+	espEnabled = state.espEnabled or false,
+	espShowNames = (state.espShowNames ~= false),
+	espShowDistance = (state.espShowDistance ~= false),
+	espShowHealth = (state.espShowHealth ~= false),
+	espShowTeam = (state.espShowTeam ~= false),
+	espTeamCheck = state.espTeamCheck or false,
+	espMaxDistance = state.espMaxDistance or 1500,
+	espRefreshRate = state.espRefreshRate or 0.15,
+	espTracers = state.espTracers or false,
 
-	-- Hitboxes
-	hitboxEnabled = false,
-	hitboxSize = 8,
-	hitboxTransparency = 0.6,
+	-- hitboxes
+	hitboxEnabled = state.hitboxEnabled or false,
+	hitboxSize = state.hitboxSize or 8,
+	hitboxTransparency = state.hitboxTransparency or 0.6,
 
-	-- Follow
-	followEnabled = false,
-	followPaused = false,
-	followOffsetBack = 4,
-	followOffsetUp = 0,
-	followUpdateRate = 0.01,
-	followSmoothness = 12,
-	equipOnFollowOrTP = false,
+	-- follow
+	followEnabled = state.followEnabled or false,
+	followPaused = state.followPaused or false,
+	followOffsetBack = state.followOffsetBack or 4,
+	followOffsetUp = state.followOffsetUp or 0,
+	followUpdateRate = state.followUpdateRate or 0.01,
+	followSmoothness = state.followSmoothness or 12,
+	equipOnFollowOrTP = state.equipOnFollowOrTP or false,
 
-	-- Health
-	infHealth = false,
-	infHealthTarget = 100,
-	infHealthRate = 0.1,
+	-- predictive follow
+	followPredictive = state.followPredictive or false,
+	followPredictAhead = state.followPredictAhead or 0.25,
 
-	-- Weapons
-	autoEquip = false,
+	-- health
+	infHealth = state.infHealth or false,
+	infHealthTarget = state.infHealthTarget or 100,
+	infHealthRate = state.infHealthRate or 0.1,
 
-	-- Team filter
-	targetTeamFilter = "All",
+	-- weapons
+	autoEquip = state.autoEquip or false,
 
-	-- Alt speed
-	altSpeedEnabled = false,
-	altSpeedBoost = 0,
-	altSpeedMaxVel = 120,
+	-- team filter
+	targetTeamFilter = state.targetTeamFilter or "All",
 
-	-- Freecam
-	freecamEnabled = false,
-	freecamSpeed = 48,
-	freecamFastMult = 3,
+	-- alt speed
+	altSpeedEnabled = state.altSpeedEnabled or false,
+	altSpeedBoost = state.altSpeedBoost or 0,
+	altSpeedMaxVel = state.altSpeedMaxVel or 120,
 
-	-- Terminate
-	terminated = false,
+	-- freecam
+	freecamEnabled = state.freecamEnabled or false,
+	freecamSpeed = state.freecamSpeed or 48,
+	freecamFastMult = state.freecamFastMult or 3,
+
+	-- terminate
+	terminated = state.terminated or false,
+
+	-- notifications
+	disableNotifications = state.disableNotifications or false,
+
+	-- UI
+	uiScale = state.uiScale or 1,
+	uiTheme = state.uiTheme or "Default",
+
+	-- player info
+	infoSelectedPlayer = state.infoSelectedPlayer or "",
+	infoAutoRefresh = (state.infoAutoRefresh ~= false),
+	infoRefreshRate = state.infoRefreshRate or 0.5,
+
+	-- AFK/session
+	antiAfk = state.antiAfk or false,
+	sessionStart = state.sessionStart or os.clock(),
+
+	-- bunnyhop
+	bunnyHop = state.bunnyHop or false,
+
+	-- teleport extras
+	tpCursorEnabled = (state.tpCursorEnabled ~= false),
+	tpCircleEnabled = state.tpCircleEnabled or false,
+	tpCircleRadius = state.tpCircleRadius or 8,
+	tpCircleSpeed = state.tpCircleSpeed or 1.5,
+
+	-- visuals
+	removeEffects = state.removeEffects or false,
+	nightVision = state.nightVision or false,
+	noWeather = state.noWeather or false,
+	noParticles = state.noParticles or false,
+
+	-- esp modes
+	espMode = state.espMode or "Highlight",
+	espTarget = state.espTarget or "",
+	espShowBar = (state.espShowBar ~= false),
+
+	-- perf
+	fpsBoost = state.fpsBoost or false,
+
+	-- cooldown
+	hopCooldown = state.hopCooldown or 8,
 }
 
---========================
--- Sections
---========================
--- Player
-local PlayerSec    = Tabs.Player:AddSection("Stats")
-local AltSpeedSec  = Tabs.Player:AddSection("Velocity Speed")
-local WeaponSec    = Tabs.Player:AddSection("Weapons")
-local HealthSec    = Tabs.Player:AddSection("Health")
-local CameraSec    = Tabs.Player:AddSection("Camera")
-
--- Movement
-local MoveSec = Tabs.Movement:AddSection("Movement")
-local UtilMoveSec = Tabs.Movement:AddSection("Utility")
-
--- Teleport
-local TpSec       = Tabs.Teleport:AddSection("Players")
-local FollowSec   = Tabs.Teleport:AddSection("Follow")
-local WaypointSec = Tabs.Teleport:AddSection("Waypoints")
-
--- Visual
-local VisualSec = Tabs.Visual:AddSection("Lighting")
-local FreecamSec = Tabs.Visual:AddSection("Freecam")
-
--- ESP
-local EspSec = Tabs.ESP:AddSection("ESP")
-local HitboxSec = Tabs.ESP:AddSection("Hitboxes")
-
--- Utility
-local ServerSec = Tabs.Utility:AddSection("Server")
-local TerminateSec = Tabs.Utility:AddSection("Terminate")
+local ui = {
+	WeaponTool = nil,
+	TeamFilter = "All",
+	TPPlayer = nil,
+	SaveName = "",
+	SavedPos = nil,
+	WaypointCode = "",
+}
 
 --========================
 -- Weapon Equipper
@@ -218,24 +392,10 @@ local function getToolNames()
 			if inst:IsA("Tool") then set[inst.Name] = true end
 		end
 	end
-
 	local list = {}
 	for name in pairs(set) do table.insert(list, name) end
 	table.sort(list)
 	return list
-end
-
-local function refreshWeaponDropdown(tryKeepSelection)
-	if not weaponDropdown then return end
-	local current = Fluent.Options.WeaponTool and Fluent.Options.WeaponTool.Value
-	local values = getToolNames()
-	weaponDropdown:SetValues(values)
-
-	if tryKeepSelection and current and table.find(values, current) then
-		Fluent.Options.WeaponTool:SetValue(current)
-	elseif #values > 0 then
-		Fluent.Options.WeaponTool:SetValue(values[1])
-	end
 end
 
 local function findToolByName(name)
@@ -252,7 +412,7 @@ local function findToolByName(name)
 end
 
 local function equipSelectedTool()
-	local name = Fluent.Options.WeaponTool and Fluent.Options.WeaponTool.Value
+	local name = ui.WeaponTool
 	local tool = findToolByName(name)
 	if not tool then return false end
 	if tool.Parent == LocalPlayer.Character then return true end
@@ -267,61 +427,22 @@ local function maybeEquipAfterAction()
 	task.defer(equipSelectedTool)
 end
 
-WeaponSec:AddParagraph({ Title = "Weapon Equipper", Content = "Client-side equip helper (Backpack/Character Tools)." })
+local function refreshWeaponDropdown(tryKeep)
+	local values = getToolNames()
+	if weaponDropdown then dropdownSetValues(weaponDropdown, values) end
 
-weaponDropdown = WeaponSec:AddDropdown("WeaponTool", {
-	Title = "Tool",
-	Description = "Select a Tool to equip.",
-	Values = getToolNames(),
-	Multi = false,
-	Default = 1,
-})
-
-WeaponSec:AddButton({ Title = "Equip Selected", Callback = function() equipSelectedTool() end })
-
-WeaponSec:AddToggle("AutoEquip", {
-	Title = "Auto Equip Selected",
-	Description = "Re-equips on respawn and when the tool returns to Backpack.",
-	Default = false,
-	Callback = function(on)
-		state.autoEquip = on
-		if on then equipSelectedTool() end
+	if tryKeep and ui.WeaponTool and table.find(values, ui.WeaponTool) then
+		-- keep
+	elseif #values > 0 then
+		ui.WeaponTool = values[1]
+		dropdownSetCurrent(weaponDropdown, ui.WeaponTool)
+	else
+		ui.WeaponTool = nil
 	end
-})
-
-WeaponSec:AddButton({ Title = "Refresh Tool List", Callback = function() refreshWeaponDropdown(true) end })
-
--- Tool listeners
-track(getBackpack().ChildAdded:Connect(function(c)
-	if c:IsA("Tool") then
-		refreshWeaponDropdown(true)
-		if state.autoEquip then task.defer(equipSelectedTool) end
-	end
-end))
-
-track(getBackpack().ChildRemoved:Connect(function(c)
-	if c:IsA("Tool") then
-		task.defer(function() refreshWeaponDropdown(true) end)
-	end
-end))
-
-track(LocalPlayer.CharacterAdded:Connect(function(char)
-	task.defer(function()
-		refreshWeaponDropdown(true)
-		if state.autoEquip then task.defer(equipSelectedTool) end
-	end)
-
-	track(char.ChildAdded:Connect(function(c)
-		if c:IsA("Tool") then refreshWeaponDropdown(true) end
-	end))
-
-	track(char.ChildRemoved:Connect(function(c)
-		if c:IsA("Tool") then task.defer(function() refreshWeaponDropdown(true) end) end
-	end))
-end))
+end
 
 --========================
--- Alt Speed (No WalkSpeed) - velocity assist
+-- Alt Speed (velocity assist)
 --========================
 local function getMoveDirection()
 	local char = LocalPlayer.Character
@@ -332,7 +453,7 @@ local function getMoveDirection()
 end
 
 track(RunService.Heartbeat:Connect(function()
-	if Fluent.Unloaded or state.terminated then return end
+	if state.terminated then return end
 	if not state.altSpeedEnabled then return end
 	if state.altSpeedBoost <= 0 then return end
 
@@ -391,7 +512,7 @@ local function startFly()
 	flyBG.Parent = root
 
 	flyConn = RunService.RenderStepped:Connect(function()
-		if Fluent.Unloaded or state.terminated then return end
+		if state.terminated then return end
 		if not state.fly then return end
 
 		local camCF = Camera.CFrame
@@ -408,6 +529,8 @@ local function startFly()
 		flyBV.Velocity = move
 		flyBG.CFrame = camCF
 	end)
+
+	table.insert(connections, flyConn)
 end
 
 --========================
@@ -425,7 +548,7 @@ local function startInfHealth()
 	local myId = infHealthTaskId
 
 	task.spawn(function()
-		while state.infHealth and (infHealthTaskId == myId) and not Fluent.Unloaded and not state.terminated do
+		while state.infHealth and (infHealthTaskId == myId) and not state.terminated do
 			pcall(function()
 				local hum = getHumanoid()
 				if hum.MaxHealth < state.infHealthTarget then hum.MaxHealth = state.infHealthTarget end
@@ -436,7 +559,7 @@ local function startInfHealth()
 	end)
 end
 
--- Pause follow on YOUR death (optional safety)
+-- Pause follow on YOUR death
 local localDiedConn
 local function bindLocalDeath()
 	if localDiedConn then localDiedConn:Disconnect(); localDiedConn = nil end
@@ -451,66 +574,117 @@ end
 task.defer(bindLocalDeath)
 
 --========================
--- Player UI
+-- PLAYER TAB (Fluent-style "sections")
 --========================
-PlayerSec:AddSlider("WalkSpeed", {
-	Title = "WalkSpeed",
-	Default = 16, Min = 0, Max = 250, Rounding = 0,
+Header(Tabs.Player, "Stats")
+Tabs.Player:CreateSlider({
+	Name = "WalkSpeed",
+	Range = {0, 200}, -- reduced (was 250)
+	Increment = 1,
+	Suffix = " WS",
+	CurrentValue = 16,
+	Flag = "WalkSpeed",
 	Callback = function(v) pcall(function() getHumanoid().WalkSpeed = v end) end
 })
-
-PlayerSec:AddSlider("JumpPower", {
-	Title = "JumpPower",
-	Default = 50, Min = 0, Max = 250, Rounding = 0,
+Tabs.Player:CreateSlider({
+	Name = "JumpPower",
+	Range = {0, 200}, -- reduced (was 250)
+	Increment = 1,
+	Suffix = " JP",
+	CurrentValue = 50,
+	Flag = "JumpPower",
 	Callback = function(v) pcall(function() getHumanoid().JumpPower = v end) end
 })
 
-AltSpeedSec:AddToggle("AltSpeedEnabled", {
-	Title = "Velocity Speed",
-	Description = "Adds extra horizontal velocity while moving.",
-	Default = false,
+Header(Tabs.Player, "Velocity Speed")
+Tabs.Player:CreateToggle({
+	Name = "Velocity Speed",
+	CurrentValue = false,
+	Flag = "AltSpeedEnabled",
 	Callback = function(on) state.altSpeedEnabled = on end
 })
-
-AltSpeedSec:AddSlider("AltSpeedBoost", {
-	Title = "Boost Amount",
-	Default = 6, Min = 0, Max = 150, Rounding = 0,
+Tabs.Player:CreateSlider({
+	Name = "Boost Amount",
+	Range = {0, 60}, -- reduced (was 150)
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = 6,
+	Flag = "AltSpeedBoost",
 	Callback = function(v) state.altSpeedBoost = v end
 })
-
-AltSpeedSec:AddSlider("AltSpeedMaxVel", {
-	Title = "Max Horizontal Velocity",
-	Default = 70, Min = 20, Max = 300, Rounding = 0,
+Tabs.Player:CreateSlider({
+	Name = "Max Horizontal Velocity",
+	Range = {20, 160}, -- reduced (was 300)
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = 70,
+	Flag = "AltSpeedMaxVel",
 	Callback = function(v) state.altSpeedMaxVel = v end
 })
 
-HealthSec:AddToggle("InfHealth", {
-	Title = "Infinite Health (Loop)",
-	Description = "Client-side loop. Server damage may still override.",
-	Default = false,
+Header(Tabs.Player, "Weapons")
+weaponDropdown = Tabs.Player:CreateDropdown({
+	Name = "Tool",
+	Options = getToolNames(),
+	CurrentOption = {},
+	MultipleOptions = false,
+	Flag = "WeaponTool",
+	Callback = function(opt)
+		if type(opt) == "table" then opt = opt[1] end
+		ui.WeaponTool = (type(opt) == "string" and opt) or ui.WeaponTool
+	end
+})
+Tabs.Player:CreateButton({ Name = "Equip Selected", Callback = function() equipSelectedTool() end })
+Tabs.Player:CreateToggle({
+	Name = "Auto Equip Selected",
+	CurrentValue = false,
+	Flag = "AutoEquip",
+	Callback = function(on)
+		state.autoEquip = on
+		if on then equipSelectedTool() end
+	end
+})
+Tabs.Player:CreateButton({ Name = "Refresh Tool List", Callback = function() refreshWeaponDropdown(true) end })
+
+Header(Tabs.Player, "Health")
+Tabs.Player:CreateToggle({
+	Name = "Client Infinite Health",
+	CurrentValue = false,
+	Flag = "InfHealth",
 	Callback = function(on) if on then startInfHealth() else stopInfHealth() end end
 })
-
-HealthSec:AddSlider("InfHealthTarget", {
-	Title = "Health Target",
-	Default = 100, Min = 1, Max = 500, Rounding = 0,
+Tabs.Player:CreateSlider({
+	Name = "Health Target",
+	Range = {1, 250}, -- reduced (was 500)
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = 100,
+	Flag = "InfHealthTarget",
 	Callback = function(v) state.infHealthTarget = v end
 })
-
-HealthSec:AddSlider("InfHealthRate", {
-	Title = "Loop Rate (sec)",
-	Default = 0.1, Min = 0.05, Max = 1, Rounding = 2,
+Tabs.Player:CreateSlider({
+	Name = "Loop Rate (sec)",
+	Range = {0.05, 1},
+	Increment = 0.01,
+	Suffix = "s",
+	CurrentValue = 0.10,
+	Flag = "InfHealthRate",
 	Callback = function(v) state.infHealthRate = v end
 })
 
-CameraSec:AddSlider("FOV", {
-	Title = "FOV",
-	Default = 70, Min = 30, Max = 120, Rounding = 0,
+Header(Tabs.Player, "Camera")
+Tabs.Player:CreateSlider({
+	Name = "FOV",
+	Range = {30, 120}, -- keep (useful range)
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = 70,
+	Flag = "FOV",
 	Callback = function(v) Camera.FieldOfView = v end
 })
 
-PlayerSec:AddButton({
-	Title = "Reset Player",
+Tabs.Player:CreateButton({
+	Name = "Reset Player",
 	Callback = function()
 		pcall(function()
 			local hum = getHumanoid()
@@ -518,38 +692,97 @@ PlayerSec:AddButton({
 			hum.JumpPower = 50
 			Camera.FieldOfView = 70
 		end)
-
 		state.altSpeedEnabled = false
 		state.altSpeedBoost = 0
 		state.altSpeedMaxVel = 120
-
-		if Fluent.Options.WalkSpeed then Fluent.Options.WalkSpeed:SetValue(16) end
-		if Fluent.Options.JumpPower then Fluent.Options.JumpPower:SetValue(50) end
-		if Fluent.Options.FOV then Fluent.Options.FOV:SetValue(70) end
-		if Fluent.Options.AltSpeedEnabled then Fluent.Options.AltSpeedEnabled:SetValue(false) end
-		if Fluent.Options.AltSpeedBoost then Fluent.Options.AltSpeedBoost:SetValue(0) end
-		if Fluent.Options.AltSpeedMaxVel then Fluent.Options.AltSpeedMaxVel:SetValue(120) end
+		notify("Reset", "Player reset.", 2)
 	end
 })
 
---========================
--- Movement UI + logic
---========================
-MoveSec:AddToggle("Noclip", { Title = "Noclip", Default = false, Callback = function(on) state.noclip = on end })
-MoveSec:AddToggle("InfiniteJump", { Title = "Infinite Jump", Default = false, Callback = function(on) state.infiniteJump = on end })
+-- Tool listeners
+track(getBackpack().ChildAdded:Connect(function(c)
+	if c:IsA("Tool") then
+		refreshWeaponDropdown(true)
+		if state.autoEquip then task.defer(equipSelectedTool) end
+	end
+end))
+track(getBackpack().ChildRemoved:Connect(function(c)
+	if c:IsA("Tool") then task.defer(function() refreshWeaponDropdown(true) end) end
+end))
+track(LocalPlayer.CharacterAdded:Connect(function(char)
+	task.defer(function()
+		refreshWeaponDropdown(true)
+		if state.autoEquip then task.defer(equipSelectedTool) end
+	end)
 
-MoveSec:AddSlider("Gravity", {
-	Title = "Gravity",
-	Default = Workspace.Gravity,
-	Min = 0, Max = 300, Rounding = 0,
+	track(char.ChildAdded:Connect(function(c)
+		if c:IsA("Tool") then refreshWeaponDropdown(true) end
+	end))
+	track(char.ChildRemoved:Connect(function(c)
+		if c:IsA("Tool") then task.defer(function() refreshWeaponDropdown(true) end) end
+	end))
+end))
+
+--========================
+-- MOVEMENT TAB
+--========================
+Header(Tabs.Movement, "Movement")
+Tabs.Movement:CreateToggle({ Name = "Noclip", CurrentValue = false, Flag = "Noclip", Callback = function(on) state.noclip = on end })
+Tabs.Movement:CreateToggle({ Name = "Infinite Jump", CurrentValue = false, Flag = "InfiniteJump", Callback = function(on) state.infiniteJump = on end })
+Tabs.Movement:CreateSlider({
+	Name = "Gravity",
+	Range = {0, 250}, -- reduced (was 300)
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = Workspace.Gravity,
+	Flag = "Gravity",
 	Callback = function(v) Workspace.Gravity = v end
 })
+Tabs.Movement:CreateToggle({ Name = "Fly", CurrentValue = false, Flag = "Fly", Callback = function(on) if on then startFly() else stopFly() end end })
+Tabs.Movement:CreateSlider({
+	Name = "Fly Speed",
+	Range = {10, 180}, -- reduced (was 250)
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = 60,
+	Flag = "FlySpeed",
+	Callback = function(v) state.flySpeed = v end
+})
 
-MoveSec:AddToggle("Fly", { Title = "Fly", Default = false, Callback = function(on) if on then startFly() else stopFly() end end })
-MoveSec:AddSlider("FlySpeed", { Title = "Fly Speed", Default = 60, Min = 10, Max = 250, Rounding = 0, Callback = function(v) state.flySpeed = v end })
+Header(Tabs.Movement, "Bunny Hop")
 
-MoveSec:AddButton({
-	Title = "Reset Movement",
+Tabs.Movement:CreateToggle({
+	Name = "Bunny Hop",
+	CurrentValue = state.bunnyHop,
+	Flag = "BunnyHop",
+	Callback = function(on) state.bunnyHop = on and true or false end
+})
+
+track(RunService.Heartbeat:Connect(function()
+	if state.terminated then return end
+	if not state.bunnyHop then return end
+
+	local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 then return end
+
+	local st = hum:GetState()
+	if st == Enum.HumanoidStateType.Running or st == Enum.HumanoidStateType.RunningNoPhysics or st == Enum.HumanoidStateType.Landed then
+		hum:ChangeState(Enum.HumanoidStateType.Jumping)
+	end
+end))
+
+Header(Tabs.Movement, "Utility")
+Tabs.Movement:CreateButton({
+	Name = "Sit / Unsit",
+	Callback = function()
+		pcall(function()
+			local hum = getHumanoid()
+			hum.Sit = not hum.Sit
+		end)
+	end
+})
+Tabs.Movement:CreateButton({
+	Name = "Reset Movement",
 	Callback = function()
 		state.noclip = false
 		state.infiniteJump = false
@@ -561,35 +794,18 @@ MoveSec:AddButton({
 			hum.WalkSpeed = 16
 			hum.JumpPower = 50
 		end)
-
-		if Fluent.Options.Noclip then Fluent.Options.Noclip:SetValue(false) end
-		if Fluent.Options.InfiniteJump then Fluent.Options.InfiniteJump:SetValue(false) end
-		if Fluent.Options.Fly then Fluent.Options.Fly:SetValue(false) end
-		if Fluent.Options.Gravity then Fluent.Options.Gravity:SetValue(196.2) end
-		if Fluent.Options.FlySpeed then Fluent.Options.FlySpeed:SetValue(60) end
-		if Fluent.Options.WalkSpeed then Fluent.Options.WalkSpeed:SetValue(16) end
-		if Fluent.Options.JumpPower then Fluent.Options.JumpPower:SetValue(50) end
-	end
-})
-
-UtilMoveSec:AddButton({
-	Title = "Sit / Unsit",
-	Callback = function()
-		pcall(function()
-			local hum = getHumanoid()
-			hum.Sit = not hum.Sit
-		end)
+		notify("Reset", "Movement reset.", 2)
 	end
 })
 
 track(UIS.JumpRequest:Connect(function()
-	if Fluent.Unloaded or state.terminated then return end
+	if state.terminated then return end
 	if not state.infiniteJump then return end
 	pcall(function() getHumanoid():ChangeState(Enum.HumanoidStateType.Jumping) end)
 end))
 
 track(RunService.Stepped:Connect(function()
-	if Fluent.Unloaded or state.terminated then return end
+	if state.terminated then return end
 	if not state.noclip then return end
 	local char = LocalPlayer.Character
 	if not char then return end
@@ -599,7 +815,7 @@ track(RunService.Stepped:Connect(function()
 end))
 
 --========================
--- TELEPORT TAB (Players + Follow + Waypoints)  ✅ FULL
+-- TELEPORT TAB
 --========================
 local TeamDropdown
 local TpDropdown
@@ -607,11 +823,9 @@ local TpDropdown
 local function getTeamNames()
 	local values = { "All" }
 	for _, team in ipairs(Teams:GetChildren()) do
-		if team:IsA("Team") then
-			table.insert(values, team.Name)
-		end
+		if team:IsA("Team") then table.insert(values, team.Name) end
 	end
-	table.sort(values, function(a, b)
+	table.sort(values, function(a,b)
 		if a == "All" then return true end
 		if b == "All" then return false end
 		return a < b
@@ -624,47 +838,18 @@ local function getPlayerNamesFiltered()
 	if not isValidTeamName(teamName) then teamName = "All" end
 	local names = {}
 	for _, p in ipairs(Players:GetPlayers()) do
-		if playerMatchesTeam(p, teamName) then
-			table.insert(names, p.Name)
-		end
+		if playerMatchesTeam(p, teamName) then table.insert(names, p.Name) end
 	end
 	table.sort(names)
 	return names
 end
 
-local function refreshTeamDropdown(tryKeep)
-	if not TeamDropdown then return end
-	local current = Fluent.Options.TeamFilter and Fluent.Options.TeamFilter.Value or "All"
-	local values = getTeamNames()
-	TeamDropdown:SetValues(values)
-	if tryKeep and table.find(values, current) then
-		Fluent.Options.TeamFilter:SetValue(current)
-	else
-		Fluent.Options.TeamFilter:SetValue("All")
-	end
-end
-
-local function refreshTargetDropdown(tryKeepTarget)
-	if not TpDropdown then return end
-	local current = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-	local values = getPlayerNamesFiltered()
-	TpDropdown:SetValues(values)
-	if tryKeepTarget and current and table.find(values, current) then
-		Fluent.Options.TPPlayer:SetValue(current)
-	elseif #values > 0 then
-		Fluent.Options.TPPlayer:SetValue(values[1])
-	end
-end
-
 local function getFollowablePlayersOrdered()
 	local teamName = state.targetTeamFilter
 	if not isValidTeamName(teamName) then teamName = "All" end
-
 	local list = {}
 	for _, p in ipairs(Players:GetPlayers()) do
-		if p ~= LocalPlayer and playerMatchesTeam(p, teamName) then
-			table.insert(list, p.Name)
-		end
+		if p ~= LocalPlayer and playerMatchesTeam(p, teamName) then table.insert(list, p.Name) end
 	end
 	table.sort(list)
 	return list
@@ -675,129 +860,40 @@ local function pickNextName(currentName)
 	if #list == 0 then return nil end
 	if not currentName then return list[1] end
 	local idx
-	for i, name in ipairs(list) do
-		if name == currentName then idx = i break end
-	end
+	for i, name in ipairs(list) do if name == currentName then idx = i break end end
 	if not idx then return list[1] end
 	local nextIdx = idx + 1
 	if nextIdx > #list then nextIdx = 1 end
 	return list[nextIdx]
 end
 
-local function setTargetDropdown(name)
-	if not name then return end
-	if Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.SetValue then
-		Fluent.Options.TPPlayer:SetValue(name)
+local function refreshTeamDropdown(tryKeep)
+	local values = getTeamNames()
+	if TeamDropdown then dropdownSetValues(TeamDropdown, values) end
+	if tryKeep and ui.TeamFilter and table.find(values, ui.TeamFilter) then
+		-- keep
+	else
+		ui.TeamFilter = "All"
+		dropdownSetCurrent(TeamDropdown, "All")
 	end
 end
 
--- Players UI
-TeamDropdown = TpSec:AddDropdown("TeamFilter", {
-	Title = "Team Filter",
-	Description = "Target list will only show players on this team.",
-	Values = getTeamNames(),
-	Multi = false,
-	Default = 1,
-})
+local function refreshTargetDropdown(tryKeepTarget)
+	local values = getPlayerNamesFiltered()
+	if TpDropdown then dropdownSetValues(TpDropdown, values) end
 
-TeamDropdown:OnChanged(function(val)
-	if type(val) ~= "string" then return end
-	if not isValidTeamName(val) then val = "All" end
-	state.targetTeamFilter = val
-	refreshTargetDropdown(false)
-end)
-
-TpDropdown = TpSec:AddDropdown("TPPlayer", {
-	Title = "Target",
-	Values = getPlayerNamesFiltered(),
-	Multi = false,
-	Default = 1,
-})
-TpSec:AddButton({
-	Title = "Next Player (Teleport)",
-	Description = "Cycles to the next player in the filtered list. If Follow is on, it also switches follow target.",
-	Callback = function()
-		local currentName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-		local nextName = pickNextName(currentName)
-
-		if not nextName then
-			Fluent:Notify({ Title = "Teleport", Content = "No valid players in this filter.", Duration = 3 })
-			return
-		end
-
-		-- Update dropdown (this triggers the TP dropdown OnChanged too, but we still TP here for reliability)
-		setTargetDropdown(nextName)
-
-		local target = Players:FindFirstChild(nextName)
-		if not target then return end
-
-		if state.followEnabled then
-			-- Follow mode: TP once behind target and rebind death listener
-			teleportBehindTarget(target)
-			maybeEquipAfterAction()
-			bindDeathListenerForTarget(target)
-		else
-			-- Normal TP: teleport near them
-			local theirRoot = getRootOf(target)
-			if not theirRoot then return end
-			getRoot().CFrame = theirRoot.CFrame * CFrame.new(0, 0, 3)
-			maybeEquipAfterAction()
-		end
-	end
-})
-
-
-track(Teams.ChildAdded:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
-track(Teams.ChildRemoved:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
-track(Players.PlayerAdded:Connect(function() refreshTargetDropdown(true) end))
-track(Players.PlayerRemoving:Connect(function() refreshTargetDropdown(true) end))
-
-local teamConns = {}
-local function hookTeamChange(plr)
-	if teamConns[plr] then teamConns[plr]:Disconnect() end
-	teamConns[plr] = plr:GetPropertyChangedSignal("Team"):Connect(function()
-		if Fluent.Unloaded or state.terminated then return end
-		refreshTargetDropdown(true)
-	end)
-end
-for _, p in ipairs(Players:GetPlayers()) do hookTeamChange(p) end
-track(Players.PlayerAdded:Connect(hookTeamChange))
-track(Players.PlayerRemoving:Connect(function(plr)
-	if teamConns[plr] then teamConns[plr]:Disconnect(); teamConns[plr] = nil end
-end))
-
-TpSec:AddButton({
-	Title = "Teleport",
-	Callback = function()
-		local targetName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-		if type(targetName) ~= "string" then return end
-		local target = Players:FindFirstChild(targetName)
-		if not target or target == LocalPlayer then return end
-		if not playerMatchesTeam(target, state.targetTeamFilter) then return end
-
-		local theirRoot = getRootOf(target)
-		if not theirRoot then return end
-
-		getRoot().CFrame = theirRoot.CFrame * CFrame.new(0, 0, 3)
-		maybeEquipAfterAction()
-	end
-})
-
---========================
--- Follow (TP once on start/switch, then smooth follow)
---========================
-local followDiedConn
-local followAcc = 0
-
-local function disconnectFollowDied()
-	if followDiedConn then
-		followDiedConn:Disconnect()
-		followDiedConn = nil
+	if tryKeepTarget and ui.TPPlayer and table.find(values, ui.TPPlayer) then
+		-- keep
+	elseif #values > 0 then
+		ui.TPPlayer = values[1]
+		dropdownSetCurrent(TpDropdown, ui.TPPlayer)
+	else
+		ui.TPPlayer = nil
 	end
 end
 
 local function getCurrentTarget()
-	local name = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
+	local name = ui.TPPlayer
 	if type(name) ~= "string" or name == "" then return nil end
 	local plr = Players:FindFirstChild(name)
 	if not plr or plr == LocalPlayer then return nil end
@@ -809,12 +905,14 @@ local function teleportBehindTarget(targetPlr)
 	if not targetPlr then return false end
 	local theirRoot = getRootOf(targetPlr)
 	if not theirRoot then return false end
-
 	local myRoot = getRoot()
-	if not myRoot then return false end
-
 	myRoot.CFrame = theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
 	return true
+end
+
+local followDiedConn
+local function disconnectFollowDied()
+	if followDiedConn then followDiedConn:Disconnect(); followDiedConn = nil end
 end
 
 local function bindDeathListenerForTarget(plr)
@@ -824,32 +922,133 @@ local function bindDeathListenerForTarget(plr)
 	if not hum then return end
 
 	followDiedConn = hum.Died:Connect(function()
-		if state.followEnabled then
-			-- switch to next valid target, TP once, continue follow
-			local currentName = Fluent.Options.TPPlayer and Fluent.Options.TPPlayer.Value
-			local nextName = pickNextName(currentName)
-			if not nextName then
-				state.followEnabled = false
-				state.followPaused = false
-				if Fluent.Options.FollowToggle then Fluent.Options.FollowToggle:SetValue(false) end
-				disconnectFollowDied()
-				return
-			end
-
-			setTargetDropdown(nextName)
-			local nextPlr = Players:FindFirstChild(nextName)
-			if nextPlr then
-				teleportBehindTarget(nextPlr)
-				maybeEquipAfterAction()
-				bindDeathListenerForTarget(nextPlr)
-			end
+		if not state.followEnabled then return end
+		local nextName = pickNextName(ui.TPPlayer)
+		if not nextName then
+			state.followEnabled = false
+			state.followPaused = false
+			disconnectFollowDied()
+			notify("Follow", "No valid players left.", 3)
+			return
+		end
+		ui.TPPlayer = nextName
+		dropdownSetCurrent(TpDropdown, nextName)
+		local nextPlr = Players:FindFirstChild(nextName)
+		if nextPlr then
+			teleportBehindTarget(nextPlr)
+			maybeEquipAfterAction()
+			bindDeathListenerForTarget(nextPlr)
 		end
 	end)
+
+	table.insert(connections, followDiedConn)
 end
 
-FollowSec:AddToggle("FollowToggle", {
-	Title = "Follow Target",
-	Default = false,
+Header(Tabs.Teleport, "Players")
+TeamDropdown = Tabs.Teleport:CreateDropdown({
+	Name = "Team Filter",
+	Options = getTeamNames(),
+	CurrentOption = {"All"},
+	MultipleOptions = false,
+	Flag = "TeamFilter",
+	Callback = function(val)
+		if type(val) == "table" then val = val[1] end
+		if type(val) ~= "string" then return end
+		if not isValidTeamName(val) then val = "All" end
+		ui.TeamFilter = val
+		state.targetTeamFilter = val
+		refreshTargetDropdown(false)
+	end
+})
+
+TpDropdown = Tabs.Teleport:CreateDropdown({
+	Name = "Target",
+	Options = getPlayerNamesFiltered(),
+	CurrentOption = {},
+	MultipleOptions = false,
+	Flag = "TPPlayer",
+	Callback = function(val)
+		if type(val) == "table" then val = val[1] end
+		if type(val) ~= "string" then return end
+		ui.TPPlayer = val
+
+		if state.followEnabled then
+			local target = getCurrentTarget()
+			if target then
+				teleportBehindTarget(target)
+				maybeEquipAfterAction()
+				bindDeathListenerForTarget(target)
+			end
+		end
+	end
+})
+
+Tabs.Teleport:CreateButton({
+	Name = "Teleport",
+	Callback = function()
+		local target = getCurrentTarget()
+		if not target then return end
+		local theirRoot = getRootOf(target)
+		if not theirRoot then return end
+		getRoot().CFrame = theirRoot.CFrame * CFrame.new(0, 0, 3)
+		maybeEquipAfterAction()
+	end
+})
+
+Tabs.Teleport:CreateButton({
+	Name = "Next Player (Teleport)",
+	Callback = function()
+		local nextName = pickNextName(ui.TPPlayer)
+		if not nextName then
+			notify("Teleport", "No valid players in this filter.", 3)
+			return
+		end
+
+		ui.TPPlayer = nextName
+		dropdownSetCurrent(TpDropdown, nextName)
+
+		local target = Players:FindFirstChild(nextName)
+		if not target then return end
+
+		if state.followEnabled then
+			teleportBehindTarget(target)
+			maybeEquipAfterAction()
+			bindDeathListenerForTarget(target)
+		else
+			local theirRoot = getRootOf(target)
+			if not theirRoot then return end
+			getRoot().CFrame = theirRoot.CFrame * CFrame.new(0, 0, 3)
+			maybeEquipAfterAction()
+		end
+	end
+})
+
+track(Teams.ChildAdded:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
+track(Teams.ChildRemoved:Connect(function() refreshTeamDropdown(true); refreshTargetDropdown(true) end))
+track(Players.PlayerAdded:Connect(function() refreshTargetDropdown(true) end))
+track(Players.PlayerRemoving:Connect(function() refreshTargetDropdown(true) end))
+
+local teamConns = {}
+local function hookTeamChange(plr)
+	if teamConns[plr] then teamConns[plr]:Disconnect() end
+	teamConns[plr] = plr:GetPropertyChangedSignal("Team"):Connect(function()
+		if state.terminated then return end
+		refreshTargetDropdown(true)
+	end)
+end
+for _, p in ipairs(Players:GetPlayers()) do hookTeamChange(p) end
+track(Players.PlayerAdded:Connect(hookTeamChange))
+track(Players.PlayerRemoving:Connect(function(plr)
+	if teamConns[plr] then teamConns[plr]:Disconnect(); teamConns[plr] = nil end
+end))
+
+Header(Tabs.Teleport, "Follow")
+local followAcc = 0
+
+Tabs.Teleport:CreateToggle({
+	Name = "Follow Target",
+	CurrentValue = false,
+	Flag = "FollowToggle",
 	Callback = function(on)
 		state.followEnabled = on
 		state.followPaused = false
@@ -860,20 +1059,19 @@ FollowSec:AddToggle("FollowToggle", {
 			return
 		end
 
-		-- On start: TP once, then follow smoothly
 		local target = getCurrentTarget()
 		if not target then
-			-- pick first valid target
 			local nextName = pickNextName(nil)
 			if nextName then
-				setTargetDropdown(nextName)
+				ui.TPPlayer = nextName
+				dropdownSetCurrent(TpDropdown, nextName)
 				target = Players:FindFirstChild(nextName)
 			end
 		end
 
 		if not target then
 			state.followEnabled = false
-			if Fluent.Options.FollowToggle then Fluent.Options.FollowToggle:SetValue(false) end
+			notify("Follow", "No valid target.", 3)
 			return
 		end
 
@@ -883,64 +1081,124 @@ FollowSec:AddToggle("FollowToggle", {
 	end
 })
 
-FollowSec:AddSlider("FollowBack", {
-	Title = "Offset Back",
-	Default = 4,
-	Min = 0, Max = 25, Rounding = 0,
-	Callback = function(v) state.followOffsetBack = v end
-})
-
-FollowSec:AddSlider("FollowUp", {
-	Title = "Offset Up",
-	Default = 0,
-	Min = -10, Max = 25, Rounding = 0,
-	Callback = function(v) state.followOffsetUp = v end
-})
-
-FollowSec:AddSlider("FollowSmooth", {
-	Title = "Smoothness",
-	Default = 12,
-	Min = 1, Max = 25, Rounding = 0,
-	Callback = function(v) state.followSmoothness = v end
-})
-
-FollowSec:AddSlider("FollowRate", {
-	Title = "Update Rate (sec)",
-	Default = 0.01,
-	Min = 0.01, Max = 1, Rounding = 2,
+Tabs.Teleport:CreateSlider({ Name = "Offset Back", Range = {0, 25}, Increment = 1, CurrentValue = 4, Flag = "FollowBack", Callback = function(v) state.followOffsetBack = v end })
+Tabs.Teleport:CreateSlider({ Name = "Offset Up", Range = {-10, 25}, Increment = 1, CurrentValue = 0, Flag = "FollowUp", Callback = function(v) state.followOffsetUp = v end })
+Tabs.Teleport:CreateSlider({ Name = "Smoothness", Range = {1, 25}, Increment = 1, CurrentValue = 12, Flag = "FollowSmooth", Callback = function(v) state.followSmoothness = v end })
+Tabs.Teleport:CreateSlider({
+	Name = "Update Rate (sec)",
+	Range = {0.01, 0.5}, -- reduced (was 1)
+	Increment = 0.01,
+	Suffix = "s",
+	CurrentValue = 0.01,
+	Flag = "FollowRate",
 	Callback = function(v) state.followUpdateRate = v end
 })
 
-FollowSec:AddToggle("EquipOnTPFollow", {
-	Title = "Equip selected weapon on TP/Follow",
-	Default = false,
-	Callback = function(on) state.equipOnFollowOrTP = on end
+Tabs.Teleport:CreateToggle({
+	Name = "Predictive Follow",
+	CurrentValue = state.followPredictive,
+	Flag = "FollowPredictive",
+	Callback = function(on) state.followPredictive = on and true or false end
 })
 
-FollowSec:AddButton({
-	Title = "Stop Follow",
+Tabs.Teleport:CreateSlider({
+	Name = "Predict Ahead",
+	Range = {0, 1.0},
+	Increment = 0.05,
+	Suffix = "s",
+	CurrentValue = state.followPredictAhead,
+	Flag = "FollowPredictAhead",
+	Callback = function(v) state.followPredictAhead = v end
+})
+
+Tabs.Teleport:CreateToggle({
+	Name = "Equip Weapon on Follow",
+	CurrentValue = false,
+	Flag = "EquipOnTPFollow",
+	Callback = function(on) state.equipOnFollowOrTP = on end
+})
+Tabs.Teleport:CreateButton({
+	Name = "Stop Follow",
 	Callback = function()
 		state.followEnabled = false
 		state.followPaused = false
 		disconnectFollowDied()
-		if Fluent.Options.FollowToggle then Fluent.Options.FollowToggle:SetValue(false) end
+		notify("Follow", "Stopped.", 2)
 	end
 })
 
--- If you manually change target while following, TP once behind the new target
-TpDropdown:OnChanged(function()
-	if not state.followEnabled then return end
-	local target = getCurrentTarget()
-	if target then
-		teleportBehindTarget(target)
-		maybeEquipAfterAction()
-		bindDeathListenerForTarget(target)
-	end
-end)
+Header(Tabs.Teleport, "Circle Target")
 
--- Smooth follow loop (AFTER initial TP)
+Tabs.Teleport:CreateToggle({
+	Name = "Circle Target",
+	CurrentValue = state.tpCircleEnabled,
+	Flag = "CircleTarget",
+	Callback = function(on) state.tpCircleEnabled = on and true or false end
+})
+
+Tabs.Teleport:CreateSlider({
+	Name = "Radius",
+	Range = {3, 25},
+	Increment = 1,
+	Suffix = "m",
+	CurrentValue = state.tpCircleRadius,
+	Flag = "CircleRadius",
+	Callback = function(v) state.tpCircleRadius = v end
+})
+
+Tabs.Teleport:CreateSlider({
+	Name = "Speed",
+	Range = {0.2, 5},
+	Increment = 0.1,
+	Suffix = "x",
+	CurrentValue = state.tpCircleSpeed,
+	Flag = "CircleSpeed",
+	Callback = function(v) state.tpCircleSpeed = v end
+})
+
 track(RunService.RenderStepped:Connect(function(dt)
-	if Fluent.Unloaded or state.terminated then return end
+	if state.terminated then return end
+	if not state.tpCircleEnabled then return end
+	local target = getCurrentTarget()
+	if not target then return end
+	local tr = getRootOf(target)
+	local mr = getRoot()
+	if not tr or not mr then return end
+
+	state._circleT = (state._circleT or 0) + dt * state.tpCircleSpeed
+	local ang = state._circleT
+	local offset = Vector3.new(math.cos(ang), 0, math.sin(ang)) * state.tpCircleRadius
+	local desired = CFrame.new(tr.Position + offset + Vector3.new(0, state.followOffsetUp, 0), tr.Position)
+	mr.CFrame = mr.CFrame:Lerp(desired, 1 - math.exp(-12 * dt))
+end))
+
+Header(Tabs.Teleport, "Quick Teleports")
+
+Tabs.Teleport:CreateButton({
+	Name = "Teleport to Cursor",
+	Callback = function()
+		local cf = getMouseHitCFrame(5000)
+		local r = getRoot()
+		r.CFrame = cf
+		maybeEquipAfterAction()
+	end
+})
+
+Tabs.Teleport:CreateButton({
+	Name = "Teleport to Spawn",
+	Callback = function()
+		local cf = findSpawnCFrame()
+		if not cf then
+			notify("Teleport", "Spawn location not found in this game.", 4, true)
+			return
+		end
+		getRoot().CFrame = cf
+		maybeEquipAfterAction()
+	end
+})
+
+track(RunService.RenderStepped:Connect(function(dt)
+	if state.terminated then return end
 	if not state.followEnabled then return end
 	if state.followPaused then return end
 
@@ -955,41 +1213,62 @@ track(RunService.RenderStepped:Connect(function(dt)
 	local myRoot = getRoot()
 	if not theirRoot or not myRoot then return end
 
-	local desired = theirRoot.CFrame * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
+	local baseCF = theirRoot.CFrame
+	if state.followPredictive then
+		local vel = theirRoot.AssemblyLinearVelocity
+		local predictedPos = theirRoot.Position + (vel * state.followPredictAhead)
+		baseCF = CFrame.new(predictedPos, predictedPos + baseCF.LookVector)
+	end
+	local desired = baseCF * CFrame.new(0, state.followOffsetUp, -state.followOffsetBack)
 	local alpha = 1 - math.exp(-state.followSmoothness * dt)
 	myRoot.CFrame = myRoot.CFrame:Lerp(desired, alpha)
 end))
 
---========================
--- Waypoints (Teleport tab)
---========================
-local SavedDropdown = WaypointSec:AddDropdown("SavedPos", {
-	Title = "Waypoints",
-	Values = {},
-	Multi = false
+Header(Tabs.Teleport, "Waypoints")
+
+local SavedDropdown = Tabs.Teleport:CreateDropdown({
+	Name = "Waypoints",
+	Options = {},
+	CurrentOption = {},
+	MultipleOptions = false,
+	Flag = "SavedPos",
+	Callback = function(val)
+		if type(val) == "table" then val = val[1] end
+		if type(val) ~= "string" then return end
+		ui.SavedPos = val
+	end
 })
 
-WaypointSec:AddInput("SaveName", {
-	Title = "Waypoint Name",
-	Default = "",
-	Placeholder = "Spawn / Shop / etc",
-	Callback = function() end
+Tabs.Teleport:CreateInput({
+	Name = "Waypoint Name",
+	PlaceholderText = "Spawn / Shop / etc",
+	RemoveTextAfterFocusLost = false,
+	Callback = function(text)
+		ui.SaveName = tostring(text or "")
+	end
 })
 
 local function refreshSavedDropdown()
 	local values = {}
-	for _, item in ipairs(state.savedPositions) do
-		table.insert(values, item.Name)
+	for _, item in ipairs(state.savedPositions) do table.insert(values, item.Name) end
+	dropdownSetValues(SavedDropdown, values)
+
+	if ui.SavedPos and table.find(values, ui.SavedPos) then
+		dropdownSetCurrent(SavedDropdown, ui.SavedPos)
+	elseif #values > 0 then
+		ui.SavedPos = values[1]
+		dropdownSetCurrent(SavedDropdown, ui.SavedPos)
+	else
+		ui.SavedPos = nil
 	end
-	SavedDropdown:SetValues(values)
 end
 
-WaypointSec:AddButton({
-	Title = "Save Current Position",
+Tabs.Teleport:CreateButton({
+	Name = "Save Current Position",
 	Callback = function()
-		local name = Fluent.Options.SaveName and Fluent.Options.SaveName.Value
+		local name = ui.SaveName
 		if type(name) ~= "string" or name:gsub("%s+", "") == "" then
-			Fluent:Notify({ Title = "Waypoints", Content = "Enter a name first.", Duration = 3 })
+			notify("Waypoints", "Enter a name first.", 3)
 			return
 		end
 		table.insert(state.savedPositions, { Name = name, CFrame = getRoot().CFrame })
@@ -997,24 +1276,24 @@ WaypointSec:AddButton({
 	end
 })
 
-WaypointSec:AddButton({
-	Title = "Teleport to Waypoint",
+Tabs.Teleport:CreateButton({
+	Name = "Teleport to Waypoint",
 	Callback = function()
-		local pick = Fluent.Options.SavedPos and Fluent.Options.SavedPos.Value
+		local pick = ui.SavedPos
 		for _, item in ipairs(state.savedPositions) do
 			if item.Name == pick then
 				getRoot().CFrame = item.CFrame
 				return
 			end
 		end
-		Fluent:Notify({ Title = "Waypoints", Content = "No waypoint selected.", Duration = 3 })
+		notify("Waypoints", "No waypoint selected.", 3)
 	end
 })
 
-WaypointSec:AddButton({
-	Title = "Delete Selected Waypoint",
+Tabs.Teleport:CreateButton({
+	Name = "Delete Selected Waypoint",
 	Callback = function()
-		local pick = Fluent.Options.SavedPos and Fluent.Options.SavedPos.Value
+		local pick = ui.SavedPos
 		if type(pick) ~= "string" then return end
 		for i = #state.savedPositions, 1, -1 do
 			if state.savedPositions[i].Name == pick then
@@ -1026,22 +1305,21 @@ WaypointSec:AddButton({
 	end
 })
 
-WaypointSec:AddButton({
-	Title = "Clear All Waypoints",
+Tabs.Teleport:CreateButton({
+	Name = "Clear All Waypoints",
 	Callback = function()
 		state.savedPositions = {}
 		refreshSavedDropdown()
 	end
 })
 
--- Export/Import code (manual persistence across servers in SAME game)
-WaypointSec:AddInput("WaypointCode", {
-	Title = "Waypoint Code",
-	Description = "Export/Import manually (same place).",
-	Default = "",
-	Placeholder = "Paste waypoint code here...",
-	Finished = false,
-	Callback = function() end
+Tabs.Teleport:CreateInput({
+	Name = "Waypoint Code",
+	PlaceholderText = "Paste waypoint code here...",
+	RemoveTextAfterFocusLost = false,
+	Callback = function(text)
+		ui.WaypointCode = tostring(text or "")
+	end
 })
 
 local function serializeWaypoints()
@@ -1072,38 +1350,33 @@ local function deserializeWaypoints(json)
 	return true
 end
 
-WaypointSec:AddButton({
-	Title = "Export Waypoints",
+Tabs.Teleport:CreateButton({
+	Name = "Export Waypoints",
 	Callback = function()
 		local code = serializeWaypoints()
-		if Fluent.Options.WaypointCode then
-			Fluent.Options.WaypointCode:SetValue(code)
-		end
+		ui.WaypointCode = code
 		if typeof(setclipboard) == "function" then
 			pcall(function() setclipboard(code) end)
-			Fluent:Notify({ Title = "Waypoints", Content = "Exported + copied to clipboard.", Duration = 3 })
+			notify("Waypoints", "Exported + copied to clipboard.", 3)
 		else
-			Fluent:Notify({ Title = "Waypoints", Content = "Exported. Copy the code from the input box.", Duration = 4 })
+			notify("Waypoints", "Exported. Copy from the input box.", 4)
 		end
 	end
 })
 
-WaypointSec:AddButton({
-	Title = "Import Waypoints",
+Tabs.Teleport:CreateButton({
+	Name = "Import Waypoints",
 	Callback = function()
-		local code = Fluent.Options.WaypointCode and Fluent.Options.WaypointCode.Value
+		local code = ui.WaypointCode
 		if type(code) ~= "string" or #code < 5 then return end
 		local ok, err = deserializeWaypoints(code)
-		if ok then
-			Fluent:Notify({ Title = "Waypoints", Content = "Imported successfully.", Duration = 3 })
-		else
-			Fluent:Notify({ Title = "Waypoints", Content = "Import failed: " .. tostring(err), Duration = 5 })
-		end
+		if ok then notify("Waypoints", "Imported successfully.", 3)
+		else notify("Waypoints", "Import failed: " .. tostring(err), 5) end
 	end
 })
 
 --========================
--- Visual: Fullbright + Freecam
+-- VISUAL TAB
 --========================
 local function setFullbright(on)
 	if on then
@@ -1130,13 +1403,99 @@ local function setFullbright(on)
 	end
 end
 
-VisualSec:AddToggle("Fullbright", {
-	Title = "Fullbright",
-	Default = false,
-	Callback = function(on) setFullbright(on) end
-})
+Header(Tabs.Visual, "Lighting")
+Tabs.Visual:CreateToggle({ Name = "Fullbright", CurrentValue = false, Flag = "Fullbright", Callback = function(on) setFullbright(on) end })
 
--- Freecam
+Header(Tabs.Visual, "Visual Filters")
+
+local savedVisual = savedVisual or {}
+
+local function setRemoveEffects(on)
+	if on then
+		if savedVisual._effectsSaved then return end
+		savedVisual._effectsSaved = {}
+		for _, inst in ipairs(Lighting:GetChildren()) do
+			if inst:IsA("BloomEffect") or inst:IsA("BlurEffect") or inst:IsA("ColorCorrectionEffect") or inst:IsA("SunRaysEffect") or inst:IsA("DepthOfFieldEffect") then
+				savedVisual._effectsSaved[inst] = inst.Enabled
+				inst.Enabled = false
+			end
+		end
+	else
+		if not savedVisual._effectsSaved then return end
+		for inst, was in pairs(savedVisual._effectsSaved) do
+			if inst and inst.Parent then inst.Enabled = was end
+		end
+		savedVisual._effectsSaved = nil
+	end
+end
+
+local nightCC = nightCC or Instance.new("ColorCorrectionEffect")
+nightCC.Name = "AdminNightVision"
+nightCC.Parent = Lighting
+nightCC.Enabled = false
+
+local function setNightVision(on)
+	nightCC.Enabled = on and true or false
+	if nightCC.Enabled then
+		nightCC.Contrast = 0.2
+		nightCC.Brightness = 0.05
+		nightCC.Saturation = 0.1
+		nightCC.TintColor = Color3.fromRGB(120, 255, 160)
+	end
+end
+
+local savedWeather = savedWeather or {}
+local function setNoWeather(on)
+	if on then
+		if savedWeather._saved then return end
+		savedWeather._saved = {
+			FogEnd = Lighting.FogEnd,
+			FogStart = Lighting.FogStart,
+			FogColor = Lighting.FogColor
+		}
+		Lighting.FogEnd = 1e9
+		Lighting.FogStart = 0
+	else
+		if not savedWeather._saved then return end
+		for k,v in pairs(savedWeather._saved) do Lighting[k] = v end
+		savedWeather._saved = nil
+	end
+
+	-- Disable Atmosphere/Clouds when enabled
+	for _, inst in ipairs(Lighting:GetChildren()) do
+		if inst:IsA("Atmosphere") or inst:IsA("Clouds") then
+			inst.Enabled = not on
+		end
+	end
+end
+
+local particleCache = particleCache or {}
+local function setNoParticles(on)
+	if on then
+		if particleCache._saved then return end
+		particleCache._saved = {}
+		for _, inst in ipairs(Workspace:GetDescendants()) do
+			if inst:IsA("ParticleEmitter") or inst:IsA("Trail") or inst:IsA("Beam") then
+				particleCache._saved[inst] = inst.Enabled
+				inst.Enabled = false
+			end
+		end
+	else
+		if not particleCache._saved then return end
+		for inst, was in pairs(particleCache._saved) do
+			if inst and inst.Parent then inst.Enabled = was end
+		end
+		particleCache._saved = nil
+	end
+end
+
+Tabs.Visual:CreateToggle({ Name = "Remove Lighting Effects", CurrentValue = state.removeEffects, Flag="RemoveEffects", Callback = function(on) state.removeEffects = on; setRemoveEffects(on) end })
+Tabs.Visual:CreateToggle({ Name = "Night Vision", CurrentValue = state.nightVision, Flag="NightVision", Callback = function(on) state.nightVision = on; setNightVision(on) end })
+Tabs.Visual:CreateToggle({ Name = "No Weather (Fog/Atmosphere)", CurrentValue = state.noWeather, Flag="NoWeather", Callback = function(on) state.noWeather = on; setNoWeather(on) end })
+Tabs.Visual:CreateToggle({ Name = "No Particles", CurrentValue = state.noParticles, Flag="NoParticles", Callback = function(on) state.noParticles = on; setNoParticles(on) end })
+
+Header(Tabs.Visual, "Freecam")
+
 local freecamConn
 local freecamPos
 local freecamRot = Vector2.zero
@@ -1166,7 +1525,7 @@ local function startFreecam()
 	UIS.MouseBehavior = Enum.MouseBehavior.LockCenter
 
 	freecamConn = RunService.RenderStepped:Connect(function(dt)
-		if Fluent.Unloaded or state.terminated then return end
+		if state.terminated then return end
 		if not state.freecamEnabled then return end
 
 		local speed = state.freecamSpeed
@@ -1187,46 +1546,41 @@ local function startFreecam()
 		local basis = CFrame.new(freecamPos) * rotCF
 
 		local move = Vector3.new(right, up, forward)
-		if move.Magnitude > 0 then
-			move = move.Unit * speed * dt
-		end
+		if move.Magnitude > 0 then move = move.Unit * speed * dt end
 
 		freecamPos += (basis.RightVector * move.X) + (Vector3.new(0,1,0) * move.Y) + (basis.LookVector * move.Z)
 		Camera.CFrame = CFrame.new(freecamPos) * rotCF
 	end)
+
 	table.insert(connections, freecamConn)
 end
 
-FreecamSec:AddToggle("Freecam", {
-	Title = "Freecam",
-	Description = "Camera-only movement. Q/E up-down. Shift = faster.",
-	Default = false,
-	Callback = function(on) if on then startFreecam() else stopFreecam() end end
-})
-
-FreecamSec:AddSlider("FreecamSpeed", {
-	Title = "Speed",
-	Default = 48, Min = 10, Max = 250, Rounding = 0,
+Tabs.Visual:CreateToggle({ Name = "Freecam", CurrentValue = false, Flag = "Freecam", Callback = function(on) if on then startFreecam() else stopFreecam() end end })
+Tabs.Visual:CreateSlider({
+	Name = "Freecam Speed",
+	Range = {10, 150}, -- reduced (was 250)
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = 48,
+	Flag = "FreecamSpeed",
 	Callback = function(v) state.freecamSpeed = v end
 })
-
-FreecamSec:AddSlider("FreecamFastMult", {
-	Title = "Shift Multiplier",
-	Default = 3, Min = 2, Max = 8, Rounding = 0,
+Tabs.Visual:CreateSlider({
+	Name = "Shift Multiplier",
+	Range = {2, 6}, -- reduced (was 8)
+	Increment = 1,
+	Suffix = "x",
+	CurrentValue = 3,
+	Flag = "FreecamFastMult",
 	Callback = function(v) state.freecamFastMult = v end
 })
-
-FreecamSec:AddButton({
-	Title = "Reset Camera",
-	Callback = function()
-		stopFreecam()
-		if Fluent.Options.Freecam then Fluent.Options.Freecam:SetValue(false) end
-	end
-})
+Tabs.Visual:CreateButton({ Name = "Reset Camera", Callback = function() stopFreecam(); notify("Camera", "Reset.", 2) end })
 
 --========================
--- ESP + Hitboxes (same as before)
+-- ESP TAB
 --========================
+Header(Tabs.ESP, "ESP")
+
 local espFolder = Instance.new("Folder")
 espFolder.Name = "AdminESP"
 espFolder.Parent = Workspace
@@ -1249,7 +1603,10 @@ local function ensureHighlight(plr)
 end
 
 local function ensureBillboard(plr)
-	if billboardsByPlayer[plr] then return billboardsByPlayer[plr] end
+	if billboardsByPlayer[plr] then
+		return billboardsByPlayer[plr]
+	end
+
 	local bb = Instance.new("BillboardGui")
 	bb.Name = "ESPLabel_" .. plr.Name
 	bb.Size = UDim2.fromOffset(280, 54)
@@ -1258,14 +1615,39 @@ local function ensureBillboard(plr)
 	bb.MaxDistance = state.espMaxDistance
 	bb.Parent = espFolder
 
+	-- Text
 	local tl = Instance.new("TextLabel")
 	tl.BackgroundTransparency = 1
 	tl.Size = UDim2.fromScale(1, 1)
-	tl.TextScaled = true
+	tl.TextScaled = false
+	tl.TextSize = 14
+	tl.TextWrapped = false
 	tl.Font = Enum.Font.GothamSemibold
 	tl.TextStrokeTransparency = 0.5
+	tl.TextColor3 = Color3.new(1, 1, 1)
 	tl.Text = ""
 	tl.Parent = bb
+
+	-- Health bar background
+	local barBg = Instance.new("Frame")
+	barBg.Name = "HP_BG"
+	barBg.AnchorPoint = Vector2.new(0.5, 0)
+	barBg.Position = UDim2.new(0.5, 0, 1, -10)
+	barBg.Size = UDim2.fromOffset(160, 6)
+	barBg.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+	barBg.BackgroundTransparency = 0.35
+	barBg.BorderSizePixel = 0
+	barBg.Visible = false
+	barBg.Parent = bb
+
+	-- Health bar fill
+	local bar = Instance.new("Frame")
+	bar.Name = "HP"
+	bar.Position = UDim2.fromOffset(0, 0)
+	bar.Size = UDim2.fromScale(1, 1)
+	bar.BackgroundColor3 = Color3.fromRGB(80, 200, 120)
+	bar.BorderSizePixel = 0
+	bar.Parent = barBg
 
 	billboardsByPlayer[plr] = bb
 	return bb
@@ -1298,10 +1680,8 @@ end
 local function cleanupESPPlayer(plr)
 	local h = highlightsByPlayer[plr]
 	if h then h:Destroy(); highlightsByPlayer[plr] = nil end
-
 	local bb = billboardsByPlayer[plr]
 	if bb then bb:Destroy(); billboardsByPlayer[plr] = nil end
-
 	local tr = tracersByPlayer[plr]
 	if tr then
 		if tr.Beam then tr.Beam:Destroy() end
@@ -1326,9 +1706,8 @@ end
 local function startESP()
 	if espConn then espConn:Disconnect() end
 	local acc = 0
-
 	espConn = RunService.RenderStepped:Connect(function(dt)
-		if Fluent.Unloaded or state.terminated then return end
+		if state.terminated then return end
 		if not state.espEnabled then return end
 
 		acc += dt
@@ -1339,6 +1718,7 @@ local function startESP()
 		if not localRoot then return end
 
 		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr == LocalPlayer then continue end
 			local root = getRootOf(plr)
 			if not root then cleanupESPPlayer(plr) continue end
 
@@ -1350,6 +1730,7 @@ local function startESP()
 
 			if state.espShowNames or state.espShowDistance or state.espShowHealth or state.espShowTeam then
 				local bb = ensureBillboard(plr)
+				bb.Enabled = (state.espMode == "Highlight")
 				bb.Adornee = root
 				bb.MaxDistance = state.espMaxDistance
 				local tl = bb:FindFirstChildOfClass("TextLabel")
@@ -1366,6 +1747,39 @@ local function startESP()
 					end
 					if state.espShowDistance then table.insert(parts, ("%.0fm"):format(dist)) end
 					tl.Text = table.concat(parts, "  •  ")
+					local hum = getHumanoidOf(plr)
+					local isTarget = (state.espTarget ~= "" and plr.Name == state.espTarget)
+
+					-- Health bar (Billboard)
+					local bg = bb:FindFirstChild("HP_BG")
+					local bar = bg and bg:FindFirstChild("HP")
+
+					-- Only allow Billboard HP bar in Highlight mode
+					local allowBillboardHP = (state.espMode == "Highlight")
+
+					if bg then
+						if allowBillboardHP and state.espShowBar and hum and hum.MaxHealth > 0 then
+							local ratio = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+							bg.Visible = true
+							bar.Size = UDim2.new(ratio, 0, 1, 0)
+							bar.BackgroundColor3 = Color3.fromRGB(
+								math.floor(255 - ratio * 255),
+								math.floor(ratio * 255),
+								80
+							)
+						else
+							bg.Visible = false
+						end
+					end
+
+
+					-- Target emphasis (Highlight + label)
+					if h then
+						h.FillTransparency = isTarget and 0.35 or 0.6
+						h.OutlineTransparency = 0
+					end
+						tl.Font = isTarget and Enum.Font.GothamBold or Enum.Font.GothamSemibold
+						tl.TextStrokeTransparency = isTarget and 0.25 or 0.5
 				end
 			else
 				if billboardsByPlayer[plr] then billboardsByPlayer[plr]:Destroy(); billboardsByPlayer[plr] = nil end
@@ -1379,9 +1793,7 @@ local function startESP()
 				tr.A1.WorldPosition = root.Position
 				tr.Beam.Enabled = true
 			else
-				if tracersByPlayer[plr] then
-					tracersByPlayer[plr].Beam.Enabled = false
-				end
+				if tracersByPlayer[plr] then tracersByPlayer[plr].Beam.Enabled = false end
 			end
 		end
 	end)
@@ -1389,54 +1801,420 @@ local function startESP()
 	table.insert(connections, espConn)
 end
 
-EspSec:AddToggle("ESPEnabled", {
-	Title = "Enabled",
-	Default = false,
+--========================
+-- Drawing ESP (single manager, no duplicates, nukes leftovers)
+--========================
+local DrawingOK = (typeof(Drawing) == "table" and typeof(Drawing.new) == "function")
+local drawingConn = nil
+
+-- Global registry so drawings from previous executions can be removed too
+_G.__ADMIN_DRAW_REG = _G.__ADMIN_DRAW_REG or {}
+
+local function reg(obj)
+	table.insert(_G.__ADMIN_DRAW_REG, obj)
+	return obj
+end
+
+local function nukeGlobalDrawings()
+	local regt = _G.__ADMIN_DRAW_REG
+	if type(regt) ~= "table" then return end
+	for i = #regt, 1, -1 do
+		local obj = regt[i]
+		regt[i] = nil
+		if obj then
+			pcall(function() obj.Visible = false end)
+			pcall(function()
+				if obj.Remove then obj:Remove()
+				elseif obj.Destroy then obj:Destroy()
+				end
+			end)
+		end
+	end
+end
+
+local drawObjects = {} -- [plr] = { box,name,hpbg,hp,lines={} }
+
+local function dremove(plr)
+	local o = drawObjects[plr]
+	if not o then return end
+
+	if o.lines then
+		for _, ln in ipairs(o.lines) do
+			pcall(function() ln.Visible = false end)
+			pcall(function() ln:Remove() end)
+		end
+	end
+
+	for _, k in ipairs({ "box","name","hpbg","hp" }) do
+		local obj = o[k]
+		if obj then
+			pcall(function() obj.Visible = false end)
+			pcall(function() obj:Remove() end)
+		end
+	end
+
+	drawObjects[plr] = nil
+end
+
+local function clearAllDrawings()
+	for plr in pairs(drawObjects) do
+		dremove(plr)
+	end
+end
+
+local function dget(plr)
+	if drawObjects[plr] then return drawObjects[plr] end
+
+	local o = { lines = {} }
+
+	o.box = reg(Drawing.new("Square"))
+	o.box.Thickness = 1
+	o.box.Filled = false
+	o.box.Visible = false
+
+	o.name = reg(Drawing.new("Text"))
+	o.name.Size = 14
+	o.name.Center = true
+	o.name.Outline = true
+	o.name.Visible = false
+	o.name.Text = ""
+
+	o.hpbg = reg(Drawing.new("Square"))
+	o.hpbg.Filled = true
+	o.hpbg.Thickness = 0
+	o.hpbg.Visible = false
+	o.hpbg.Transparency = 0.55
+
+	o.hp = reg(Drawing.new("Square"))
+	o.hp.Filled = true
+	o.hp.Thickness = 0
+	o.hp.Visible = false
+	o.hp.Transparency = 0.15
+
+	for i = 1, 12 do
+		local ln = reg(Drawing.new("Line"))
+		ln.Thickness = 1
+		ln.Visible = false
+		table.insert(o.lines, ln)
+	end
+
+	drawObjects[plr] = o
+	return o
+end
+
+local skelPairsR15 = {
+	{"Head","UpperTorso"},
+	{"UpperTorso","LowerTorso"},
+	{"UpperTorso","LeftUpperArm"},
+	{"LeftUpperArm","LeftLowerArm"},
+	{"LeftLowerArm","LeftHand"},
+	{"UpperTorso","RightUpperArm"},
+	{"RightUpperArm","RightLowerArm"},
+	{"RightLowerArm","RightHand"},
+	{"LowerTorso","LeftUpperLeg"},
+	{"LeftUpperLeg","LeftLowerLeg"},
+	{"LowerTorso","RightUpperLeg"},
+	{"RightUpperLeg","RightLowerLeg"},
+}
+
+local skelPairsR6 = {
+	{"Head","Torso"},
+	{"Torso","Left Arm"},
+	{"Torso","Right Arm"},
+	{"Torso","Left Leg"},
+	{"Torso","Right Leg"},
+}
+
+local function startDrawingESP()
+	if drawingConn then
+		drawingConn:Disconnect()
+		drawingConn = nil
+	end
+
+	drawingConn = RunService.RenderStepped:Connect(function()
+		if state.terminated then return end
+		if not DrawingOK then return end
+
+		-- Only run in drawing modes and when ESP enabled
+		if not state.espEnabled then
+			clearAllDrawings()
+			return
+		end
+
+		local mode = state.espMode
+		local drawingModes = { Box=true, Skeleton=true, ["Box+Skeleton"]=true }
+		if not drawingModes[mode] then
+			clearAllDrawings()
+			return
+		end
+
+		local lroot = getRootOf(LocalPlayer)
+		if not lroot then clearAllDrawings(); return end
+
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr == LocalPlayer then dremove(plr) continue end
+
+			local root = getRootOf(plr)
+			local hum = getHumanoidOf(plr)
+			if not root then dremove(plr) continue end
+
+			local dist = (root.Position - lroot.Position).Magnitude
+			if dist > state.espMaxDistance then dremove(plr) continue end
+			if state.espTeamCheck and plr.Team == LocalPlayer.Team then dremove(plr) continue end
+
+			local o = dget(plr)
+
+			-- hide all first
+			o.box.Visible = false
+			o.name.Visible = false
+			o.hp.Visible = false
+			o.hpbg.Visible = false
+			for _, ln in ipairs(o.lines) do ln.Visible = false end
+
+			local pos, onscreen = Camera:WorldToViewportPoint(root.Position)
+			if not onscreen then
+				continue
+			end
+
+			local scale = math.clamp(1 / (dist / 30), 0.6, 2.0)
+			local w, h = 60 * scale, 90 * scale
+
+			-- box
+			if mode == "Box" or mode == "Box+Skeleton" then
+				o.box.Size = Vector2.new(w, h)
+				o.box.Position = Vector2.new(pos.X - w/2, pos.Y - h/2)
+				o.box.Visible = true
+			end
+
+			-- name
+			o.name.Text = plr.Name
+			o.name.Position = Vector2.new(pos.X, pos.Y - h/2 - 16)
+			o.name.Visible = true
+
+			-- hp bar (Drawing)
+			if state.espShowBar and hum and hum.MaxHealth > 0 then
+				local hpRatio = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+				o.hpbg.Size = Vector2.new(w, 5)
+				o.hpbg.Position = Vector2.new(pos.X - w/2, pos.Y + h/2 + 6)
+				o.hpbg.Visible = true
+
+				o.hp.Size = Vector2.new(w * hpRatio, 5)
+				o.hp.Position = o.hpbg.Position
+				o.hp.Visible = true
+			end
+
+			-- skeleton
+			if mode == "Skeleton" or mode == "Box+Skeleton" then
+				local char = plr.Character
+				if char then
+					local pairsToUse = char:FindFirstChild("UpperTorso") and skelPairsR15 or skelPairsR6
+					local lineIdx = 1
+
+					for _, pair in ipairs(pairsToUse) do
+						local a = char:FindFirstChild(pair[1])
+						local b = char:FindFirstChild(pair[2])
+						local ln = o.lines[lineIdx]
+						lineIdx += 1
+
+						if ln and a and b and a:IsA("BasePart") and b:IsA("BasePart") then
+							local ap, ao = Camera:WorldToViewportPoint(a.Position)
+							local bp, bo = Camera:WorldToViewportPoint(b.Position)
+							if ao and bo then
+								ln.From = Vector2.new(ap.X, ap.Y)
+								ln.To = Vector2.new(bp.X, bp.Y)
+								ln.Visible = true
+							end
+						end
+					end
+
+					for i = lineIdx, #o.lines do
+						o.lines[i].Visible = false
+					end
+				end
+			end
+		end
+	end)
+
+	table.insert(connections, drawingConn)
+end
+
+local function stopDrawingESP()
+	if drawingConn then
+		drawingConn:Disconnect()
+		drawingConn = nil
+	end
+	clearAllDrawings()
+	nukeGlobalDrawings()
+end
+
+-- Clear stuck drawings from previous executions immediately
+task.defer(stopDrawingESP)
+
+Tabs.ESP:CreateToggle({
+	Name = "ESP Enabled",
+	CurrentValue = false,
+	Flag = "ESPEnabled",
 	Callback = function(on)
-		state.espEnabled = on
-		if on then startESP() else stopESP() end
+	state.espEnabled = on
+	if on then
+		startESP()
+
+		local drawingModes = { Box=true, Skeleton=true, ["Box+Skeleton"]=true }
+		if drawingModes[state.espMode] then
+			startDrawingESP()
+		else
+			stopDrawingESP()
+		end
+	else
+		stopESP()
+		stopDrawingESP()
+	end
 	end
 })
 
-EspSec:AddToggle("ESPNames",    { Title = "Show Names",    Default = true,  Callback = function(on) state.espShowNames = on end })
-EspSec:AddToggle("ESPTeam",     { Title = "Show Team",     Default = true,  Callback = function(on) state.espShowTeam = on end })
-EspSec:AddToggle("ESPHealth",   { Title = "Show Health",   Default = true,  Callback = function(on) state.espShowHealth = on end })
-EspSec:AddToggle("ESPDistance", { Title = "Show Distance", Default = true,  Callback = function(on) state.espShowDistance = on end })
-EspSec:AddToggle("ESPTeamCheck",{ Title = "Team Check",    Default = false, Callback = function(on) state.espTeamCheck = on end })
+if opt == "Off" or opt == "Highlight" then
+	stopDrawingESP()
+end
 
-EspSec:AddToggle("ESPTracers", {
-	Title = "Tracers",
-	Default = false,
-	Callback = function(on) state.espTracers = on end
+Tabs.ESP:CreateDropdown({
+	Name = "Mode",
+	Options = {"Off","Highlight","Box","Skeleton","Box+Skeleton"},
+	CurrentOption = {state.espMode},
+	MultipleOptions = false,
+	Flag = "ESPMode",
+	Callback = function(opt)
+	if type(opt) == "table" then opt = opt[1] end
+	opt = tostring(opt or "Highlight")
+	state.espMode = opt
+
+	local drawingModes = { Box=true, Skeleton=true, ["Box+Skeleton"]=true }
+	if drawingModes[opt] then
+		startDrawingESP()
+	else
+		stopDrawingESP()
+	end
+	end
 })
 
-EspSec:AddSlider("ESPMaxDistance", {
-	Title = "Max Distance",
-	Default = 1500, Min = 50, Max = 5000, Rounding = 0,
+Tabs.ESP:CreateToggle({ Name = "Show Names",    CurrentValue = true,  Flag = "ESPNames",     Callback = function(on) state.espShowNames = on end })
+Tabs.ESP:CreateToggle({ Name = "Show Team",     CurrentValue = true,  Flag = "ESPTeam",      Callback = function(on) state.espShowTeam = on end })
+Tabs.ESP:CreateToggle({ Name = "Show Health",   CurrentValue = true,  Flag = "ESPHealth",    Callback = function(on) state.espShowHealth = on end })
+Tabs.ESP:CreateToggle({ Name = "Show Distance", CurrentValue = true,  Flag = "ESPDistance",  Callback = function(on) state.espShowDistance = on end })
+Tabs.ESP:CreateToggle({ Name = "Team Check",    CurrentValue = false, Flag = "ESPTeamCheck", Callback = function(on) state.espTeamCheck = on end })
+
+Tabs.ESP:CreateToggle({
+	Name = "Health Bar",
+	CurrentValue = state.espShowBar,
+	Flag = "ESPBar",
+	Callback = function(on) state.espShowBar = on and true or false end
+})
+
+local espTargetDropdown = Tabs.ESP:CreateDropdown({
+	Name = "Target Player",
+	Options = (function()
+		local t = {"None"}
+		for _,p in ipairs(Players:GetPlayers()) do
+			if p ~= LocalPlayer then table.insert(t, p.Name) end
+		end
+		table.sort(t, function(a,b)
+			if a == "None" then return true end
+			if b == "None" then return false end
+			return a < b
+		end)
+		return t
+	end)(),
+	CurrentOption = {state.espTarget ~= "" and state.espTarget or "None"},
+	MultipleOptions = false,
+	Flag = "ESPTarget",
+	Callback = function(opt)
+		if type(opt) == "table" then opt = opt[1] end
+		opt = tostring(opt or "None")
+		state.espTarget = (opt == "None") and "" or opt
+	end
+})
+
+local function buildESPTargetList()
+	local t = { "None" }
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= LocalPlayer then
+			table.insert(t, p.Name)
+		end
+	end
+	table.sort(t, function(a, b)
+		if a == "None" then return true end
+		if b == "None" then return false end
+		return a < b
+	end)
+	return t
+end
+
+local function refreshESPTargetDropdown(tryKeep)
+	if not espTargetDropdown then return end
+
+	local values = buildESPTargetList()
+	dropdownSetValues(espTargetDropdown, values)
+
+	local wanted = (state.espTarget ~= "" and state.espTarget) or "None"
+
+	if tryKeep and table.find(values, wanted) then
+		dropdownSetCurrent(espTargetDropdown, wanted)
+	else
+		state.espTarget = ""
+		dropdownSetCurrent(espTargetDropdown, "None")
+	end
+end
+
+-- Refresh when players join/leave
+track(Players.PlayerAdded:Connect(function()
+	if state.terminated then return end
+	task.defer(function() refreshESPTargetDropdown(true) end)
+end))
+
+track(Players.PlayerRemoving:Connect(function()
+	if state.terminated then return end
+	task.defer(function() refreshESPTargetDropdown(true) end)
+end))
+
+-- Initial fill (after UI builds)
+task.defer(function()
+	refreshESPTargetDropdown(true)
+end)
+
+Tabs.ESP:CreateToggle({ Name = "Tracers", CurrentValue = false, Flag = "ESPTracers", Callback = function(on) state.espTracers = on end })
+
+Tabs.ESP:CreateSlider({
+	Name = "Max Distance",
+	Range = {50, 3000}, -- reduced (was 5000)
+	Increment = 25,
+	Suffix = "",
+	CurrentValue = 1500,
+	Flag = "ESPMaxDistance",
 	Callback = function(v)
 		state.espMaxDistance = v
 		for _, bb in pairs(billboardsByPlayer) do bb.MaxDistance = v end
 	end
 })
 
-EspSec:AddSlider("ESPRefresh", {
-	Title = "Refresh (sec)",
-	Default = 0.15, Min = 0.05, Max = 1, Rounding = 2,
+Tabs.ESP:CreateSlider({
+	Name = "Refresh (sec)",
+	Range = {0.08, 1}, -- raised min slightly (was 0.05) to reduce load
+	Increment = 0.01,
+	Suffix = "s",
+	CurrentValue = 0.15,
+	Flag = "ESPRefresh",
 	Callback = function(v) state.espRefreshRate = v end
 })
 
--- Hitboxes
-local originalHitboxes = {} -- [plr] = {Size=Vector3, Trans=number}
+Header(Tabs.ESP, "Hitboxes")
 
+local originalHitboxes = {}
 local function applyHitbox(plr)
 	if plr == LocalPlayer then return end
 	local root = getRootOf(plr)
 	if not root then return end
-
 	if not originalHitboxes[plr] then
 		originalHitboxes[plr] = { Size = root.Size, Transparency = root.Transparency }
 	end
-
 	root.Size = Vector3.new(state.hitboxSize, state.hitboxSize, state.hitboxSize)
 	root.Transparency = state.hitboxTransparency
 	root.CanCollide = false
@@ -1458,27 +2236,36 @@ local function refreshAllHitboxes()
 	end
 end
 
-HitboxSec:AddToggle("HitboxEnabled", {
-	Title = "Hitbox Toggle",
-	Default = false,
+Tabs.ESP:CreateToggle({
+	Name = "Hitbox Toggle",
+	CurrentValue = false,
+	Flag = "HitboxEnabled",
 	Callback = function(on)
 		state.hitboxEnabled = on
 		refreshAllHitboxes()
 	end
 })
 
-HitboxSec:AddSlider("HitboxSize", {
-	Title = "Hitbox Size",
-	Default = 8, Min = 2, Max = 20, Rounding = 0,
+Tabs.ESP:CreateSlider({
+	Name = "Hitbox Size",
+	Range = {2, 15}, -- reduced (was 20)
+	Increment = 1,
+	Suffix = "",
+	CurrentValue = 8,
+	Flag = "HitboxSize",
 	Callback = function(v)
 		state.hitboxSize = v
 		if state.hitboxEnabled then refreshAllHitboxes() end
 	end
 })
 
-HitboxSec:AddSlider("HitboxTransparency", {
-	Title = "Hitbox Transparency",
-	Default = 0.6, Min = 0, Max = 1, Rounding = 2,
+Tabs.ESP:CreateSlider({
+	Name = "Hitbox Transparency",
+	Range = {0, 1},
+	Increment = 0.05,
+	Suffix = "",
+	CurrentValue = 0.6,
+	Flag = "HitboxTransparency",
 	Callback = function(v)
 		state.hitboxTransparency = v
 		if state.hitboxEnabled then refreshAllHitboxes() end
@@ -1486,93 +2273,343 @@ HitboxSec:AddSlider("HitboxTransparency", {
 })
 
 --========================
--- Utility: Serverhop (no detection; errors if LocalScript)
+-- UTILITY TAB
 --========================
-local function fetchPublicServers(limit)
-	limit = math.clamp(limit or 100, 10, 100)
-	local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=2&limit=%d"):format(game.PlaceId, limit)
-	local res = HttpService:GetAsync(url)
-	return HttpService:JSONDecode(res)
-end
 
-local function pickServer(data, mode)
-	if type(data) ~= "table" or type(data.data) ~= "table" then return nil end
+--========================
+-- Utility: Server (Server Hop + Buttons)
+--========================
+Header(Tabs.Utility, "Server")
 
-	local candidates = {}
-	for _, s in ipairs(data.data) do
-		if type(s) == "table" and s.id and s.playing and s.maxPlayers then
-			if s.id ~= game.JobId and s.playing < s.maxPlayers then
-				table.insert(candidates, s)
-			end
+local ServerHop = (function()
+	local Players = game:GetService("Players")
+	local TeleportService = game:GetService("TeleportService")
+	local HttpService = game:GetService("HttpService")
+
+	local FILE_NAME = "server-hop-temp.json"
+	local AllIDs = {}
+	local cursor = ""
+	local hour = os.date("!*t").hour
+
+	local function fsOK()
+		return typeof(readfile) == "function" and typeof(writefile) == "function"
+	end
+
+	local function loadIDs()
+		if not fsOK() then
+			AllIDs = { hour }
+			return
+		end
+		local ok, data = pcall(function()
+			return HttpService:JSONDecode(readfile(FILE_NAME))
+		end)
+		if ok and type(data) == "table" then
+			AllIDs = data
+		else
+			AllIDs = { hour }
+			pcall(function() writefile(FILE_NAME, HttpService:JSONEncode(AllIDs)) end)
 		end
 	end
-	if #candidates == 0 then return nil end
 
-	if mode == "least" then
-		table.sort(candidates, function(a, b) return a.playing < b.playing end)
-		return candidates[1]
+	local function resetIfNewHour()
+		local first = AllIDs[1]
+		if type(first) == "number" and first ~= hour then
+			if typeof(delfile) == "function" then pcall(function() delfile(FILE_NAME) end) end
+			AllIDs = { hour }
+			if fsOK() then pcall(function() writefile(FILE_NAME, HttpService:JSONEncode(AllIDs)) end) end
+		end
 	end
 
-	return candidates[math.random(1, #candidates)]
-end
-
-local function serverhop(mode)
-	local ok, dataOrErr = pcall(function()
-		return fetchPublicServers(100)
-	end)
-
-	if not ok then
-		Fluent:Notify({
-			Title = "Serverhop Failed",
-			Content = "HTTP not available here.\nError: " .. tostring(dataOrErr),
-			Duration = 7
-		})
-		return
+	local function seen(id)
+		for i = 2, #AllIDs do
+			if tostring(AllIDs[i]) == tostring(id) then return true end
+		end
+		return false
 	end
 
-	local server = pickServer(dataOrErr, mode)
-	if not server then
-		Fluent:Notify({ Title = "Serverhop", Content = "No suitable servers found.", Duration = 4 })
-		return
+	local function markSeen(id)
+		table.insert(AllIDs, tostring(id))
+		if fsOK() then pcall(function() writefile(FILE_NAME, HttpService:JSONEncode(AllIDs)) end) end
 	end
 
-	local ok2, err2 = pcall(function()
-		TeleportService:TeleportToPlaceInstance(game.PlaceId, server.id, Players.LocalPlayer)
-	end)
-
-	if not ok2 then
-		Fluent:Notify({ Title = "Serverhop Failed", Content = "Teleport failed: " .. tostring(err2), Duration = 6 })
+	local function fetch(placeId, limit)
+		limit = math.clamp(limit or 100, 10, 100)
+		local url
+		if cursor == "" then
+			url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=%d"):format(placeId, limit)
+		else
+			url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=%d&cursor=%s"):format(placeId, limit, cursor)
+		end
+		-- Uses executor HTTP (works where HttpService:GetAsync is blocked)
+		local raw = game:HttpGet(url)
+		return HttpService:JSONDecode(raw)
 	end
-end
 
-ServerSec:AddParagraph({
-	Title = "Serverhop",
-	Content = "Uses client HttpService:GetAsync(). Works only where client HTTP is supported."
-})
+	local function teleportToInstance(placeId, serverId)
+		return pcall(function()
+			TeleportService:TeleportToPlaceInstance(placeId, serverId, Players.LocalPlayer)
+		end)
+	end
 
-ServerSec:AddButton({
-	Title = "Rejoin Server",
+	-- Fallback matchmaking hop (no server list)
+	local function fallbackMatchmake(placeId)
+		-- Try Teleport() first
+		local ok1 = pcall(function()
+			TeleportService:Teleport(placeId, Players.LocalPlayer)
+		end)
+		if ok1 then return true end
+
+		-- Then TeleportAsync
+		local ok2 = pcall(function()
+			local tpOpts = Instance.new("TeleportOptions")
+			tpOpts:SetTeleportData({ _hop = os.time() })
+			TeleportService:TeleportAsync(placeId, { Players.LocalPlayer }, tpOpts)
+		end)
+		return ok2
+	end
+
+	loadIDs()
+	resetIfNewHour()
+
+	local hopBusy = false
+
+	return {
+		Hop = function(_, placeId, mode)
+			if hopBusy then
+				notify("Server Hop", "A hop is already in progress.", 2)
+				return
+			end
+			hopBusy = true
+
+			-- readable pacing
+			notify("Server Hop", "Searching for available servers…", 3)
+			task.wait(0.9)
+
+			-- Try server-list hop via game:HttpGet (supports least/random)
+			local pages = 4
+			local limit = 100
+			local found = false
+			local lastErr
+
+			for _ = 1, pages do
+				local ok, site = pcall(function()
+					return fetch(placeId, limit)
+				end)
+
+				if not ok or type(site) ~= "table" then
+					lastErr = "HTTP access is unavailable."
+					break
+				end
+
+				if site.nextPageCursor and site.nextPageCursor ~= "null" then
+					cursor = site.nextPageCursor
+				else
+					cursor = ""
+				end
+
+				local candidates = {}
+				if type(site.data) == "table" then
+					for _, srv in ipairs(site.data) do
+						local id = srv and srv.id
+						local playing = srv and srv.playing
+						local maxPlayers = srv and srv.maxPlayers
+						if id and playing and maxPlayers then
+							if tostring(id) ~= game.JobId and tonumber(maxPlayers) > tonumber(playing) and not seen(id) then
+								table.insert(candidates, srv)
+							end
+						end
+					end
+				end
+
+				if #candidates > 0 then
+					if mode == "least" then
+						table.sort(candidates, function(a, b) return (a.playing or 0) < (b.playing or 0) end)
+					else
+						-- random
+						local pick = candidates[math.random(1, #candidates)]
+						candidates = { pick }
+					end
+
+					local chosen = candidates[1]
+					local id = tostring(chosen.id)
+					markSeen(id)
+
+					notify("Server Hop", "Teleporting to a new server…", 3)
+					task.wait(1.1)
+
+					local okTp, errTp = teleportToInstance(placeId, id)
+					if okTp then
+						found = true
+						break
+					end
+
+					-- Teleport blocked? stop server-list loop and use fallback
+					lastErr = "Teleport was blocked by the client environment."
+					break
+				end
+
+				-- no candidates this page
+				task.wait(0.25)
+				if cursor == "" then break end
+			end
+
+			if found then
+				hopBusy = false
+				return
+			end
+
+			-- Fallback
+			notify("Server Hop", (lastErr or "No suitable servers found.") .. " Using fallback method.", 4)
+			task.wait(1.0)
+
+			local okFallback = fallbackMatchmake(placeId)
+			hopBusy = false
+
+			if not okFallback then
+				notify("Server Hop Failed", "Teleport is blocked in this environment.", 5)
+			end
+		end
+	}
+end)()
+
+-- Buttons
+Tabs.Utility:CreateButton({
+	Name = "Rejoin Server",
 	Callback = function()
-		local ok, err = pcall(function()
+		notify("Server", "Rejoining current server…", 3)
+		task.wait(1.0)
+		local ok = pcall(function()
 			TeleportService:Teleport(game.PlaceId, Players.LocalPlayer)
 		end)
 		if not ok then
-			Fluent:Notify({ Title = "Rejoin Failed", Content = tostring(err), Duration = 5 })
+			notify("Server", "Rejoin request was blocked in this environment.", 5)
 		end
 	end
 })
 
-ServerSec:AddButton({ Title = "Server Hop (Random)", Callback = function() serverhop("random") end })
-ServerSec:AddButton({ Title = "Server Hop (Least Players)", Callback = function() serverhop("least") end })
+Tabs.Utility:CreateButton({
+	Name = "Server Hop (Random)",
+	Callback = function()
+		ServerHop:Hop(game.PlaceId, "random")
+	end
+})
 
---========================
--- Terminate (reset everything + close UI)
---========================
+Tabs.Utility:CreateButton({
+	Name = "Server Hop (Least Players)",
+	Callback = function()
+		ServerHop:Hop(game.PlaceId, "least")
+	end
+})
+
+Header(Tabs.Utility, "AFK")
+
+local VirtualUser = game:GetService("VirtualUser")
+
+Tabs.Utility:CreateToggle({
+	Name = "Anti-AFK",
+	CurrentValue = state.antiAfk,
+	Flag = "AntiAfk",
+	Callback = function(on) state.antiAfk = on and true or false end
+})
+
+track(LocalPlayer.Idled:Connect(function()
+	if not state.antiAfk or state.terminated then return end
+	pcall(function()
+		VirtualUser:CaptureController()
+		VirtualUser:ClickButton2(Vector2.new())
+	end)
+end))
+
+Header(Tabs.Utility, "Info")
+
+local utilServer = Tabs.Utility:CreateLabel("Server: -")
+local utilSession = Tabs.Utility:CreateLabel("Session: -")
+local utilPlr = Tabs.Utility:CreateLabel("Player: -")
+
+Tabs.Utility:CreateButton({
+	Name = "Reset Session Timer",
+	Callback = function()
+		state.sessionStart = os.clock()
+	end
+})
+
+track(RunService.Heartbeat:Connect(function(dt)
+	if state.terminated then return end
+
+	state._utilAcc = (state._utilAcc or 0) + dt
+	if state._utilAcc < 0.5 then return end
+	state._utilAcc = 0
+
+	local elapsed = os.clock() - (state.sessionStart or os.clock())
+	local h = math.floor(elapsed / 3600)
+	local m = math.floor((elapsed % 3600) / 60)
+	local s = math.floor(elapsed % 60)
+
+	setRFLabel(utilServer, ("Server: %d players | JobId: %s"):format(#Players:GetPlayers(), tostring(game.JobId):sub(1,12) .. "…"))
+
+	setRFLabel(utilSession, ("Session: %02d:%02d:%02d"):format(h, m, s))
+
+	local hum = getHumanoid()
+	setRFLabel(utilPlr, ("Player: %s | HP: %d"):format(LocalPlayer.Name, hum and math.floor(hum.Health+0.5) or 0))
+end))
+
+Header(Tabs.Utility, "Performance")
+
+local savedPerf = nil
+
+local function applyFPSBoost(on)
+	if on then
+		if savedPerf then return end
+		savedPerf = {
+			GlobalShadows = Lighting.GlobalShadows,
+			FogEnd = Lighting.FogEnd,
+			Technology = Lighting.Technology,
+			WaterWaveSize = Workspace.Terrain.WaterWaveSize,
+			WaterWaveSpeed = Workspace.Terrain.WaterWaveSpeed,
+			WaterReflectance = Workspace.Terrain.WaterReflectance,
+			WaterTransparency = Workspace.Terrain.WaterTransparency
+		}
+
+		Lighting.GlobalShadows = false
+		Lighting.FogEnd = 1e9
+		pcall(function() Lighting.Technology = Enum.Technology.Compatibility end)
+
+		Workspace.Terrain.WaterWaveSize = 0
+		Workspace.Terrain.WaterWaveSpeed = 0
+		Workspace.Terrain.WaterReflectance = 0
+		Workspace.Terrain.WaterTransparency = 1
+	else
+		if not savedPerf then return end
+		for k,v in pairs(savedPerf) do
+			pcall(function()
+				if k:find("^Water") then
+					Workspace.Terrain[k] = v
+				else
+					Lighting[k] = v
+				end
+			end)
+		end
+		savedPerf = nil
+	end
+end
+
+Tabs.Utility:CreateToggle({
+	Name = "FPS Booster",
+	CurrentValue = state.fpsBoost,
+	Flag = "FPSBoost",
+	Callback = function(on)
+		state.fpsBoost = on and true or false
+		applyFPSBoost(state.fpsBoost)
+	end
+})
+
+Header(Tabs.Utility, "Terminate")
+
+local terminateArmedUntil = 0
 local function terminateAll()
 	if state.terminated then return end
 	state.terminated = true
 
-	-- stop features
 	state.noclip = false
 	state.infiniteJump = false
 	state.fly = false
@@ -1582,64 +2619,294 @@ local function terminateAll()
 	state.espTracers = false
 	state.hitboxEnabled = false
 	state.altSpeedEnabled = false
+
 	stopInfHealth()
 	stopFly()
 	stopFreecam()
 	setFullbright(false)
 
-	-- restore hitboxes
-	for _, plr in ipairs(Players:GetPlayers()) do
-		restoreHitbox(plr)
-	end
+	for _, plr in ipairs(Players:GetPlayers()) do restoreHitbox(plr) end
 
-	-- stop esp + cleanup
 	pcall(stopESP)
 	pcall(function()
 		if espFolder then espFolder:Destroy() end
 	end)
 
-	-- disconnect
-	for _, c in ipairs(connections) do
-		pcall(function() c:Disconnect() end)
-	end
+	for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
 	table.clear(connections)
 
-	-- destroy UI
-	pcall(function()
-		Fluent:Destroy()
-	end)
+	pcall(function() Rayfield:Destroy() end)
 end
 
-TerminateSec:AddButton({
-	Title = "TERMINATE (Reset + Close UI)",
-	Description = "Resets all toggles/features and destroys the UI.",
+Tabs.Utility:CreateButton({
+	Name = "Reset and Close",
 	Callback = function()
-		Window:Dialog({
-			Title = "Terminate",
-			Content = "This will reset EVERYTHING and close the UI. Continue?",
-			Buttons = {
-				{ Title = "Confirm", Callback = function() terminateAll() end },
-				{ Title = "Cancel", Callback = function() end }
-			}
-		})
+		local now = os.clock()
+		if now < terminateArmedUntil then
+			terminateAll()
+			return
+		end
+		terminateArmedUntil = now + 6
+		notify("Terminate", "Press again within 6 seconds to confirm.", 6)
 	end
 })
 
 --========================
--- Settings tab (InterfaceManager + SaveManager ONLY)
+-- SETTINGS TAB
 --========================
-SaveManager:SetLibrary(Fluent)
-InterfaceManager:SetLibrary(Fluent)
-InterfaceManager:BuildInterfaceSection(Tabs.Settings)
-SaveManager:BuildConfigSection(Tabs.Settings)
-SaveManager:LoadAutoloadConfig()
+Header(Tabs.Settings, "Configuration") -- your Header() now uses CreateSection
 
--- Initial refresh (so dropdowns show something)
+local function rf_call(name, ...)
+	if type(Rayfield) ~= "table" then return false, "Rayfield not table" end
+	local fn = Rayfield[name]
+	if type(fn) ~= "function" then return false, "Missing Rayfield:" .. tostring(name) end
+	local ok, res = pcall(fn, Rayfield, ...)
+	if not ok then return false, res end
+	return true, res
+end
+
+local function config_path()
+	-- Matches Rayfield defaults: FolderName + FileName + ".rfld"
+	-- In your CreateWindow you used:
+	-- FolderName = "AllGamesHub"
+	-- FileName = "Config"
+	return "Rayfield/Configurations/" .. "Config" .. ".rfld"
+end
+
+Tabs.Settings:CreateButton({
+	Name = "Load Config",
+	Callback = function()
+		local ok, err = rf_call("LoadConfiguration")
+		if ok then
+			notify("Config", "Loaded.", 2)
+		else
+			notify("Config", "Load failed: " .. tostring(err), 5)
+		end
+	end
+})
+
+Tabs.Settings:CreateButton({
+	Name = "Save Config",
+	Callback = function()
+		-- Some Rayfield builds expose this, some don't (auto-saves anyway)
+		local ok, err = rf_call("SaveConfiguration")
+		if ok then
+			notify("Config", "Saved.", 2)
+		else
+			notify("Config", "Save not supported here (auto-save may still work).", 4)
+		end
+	end
+})
+
+Tabs.Settings:CreateButton({
+	Name = "Reset Config File",
+	Callback = function()
+		local path = config_path()
+		if typeof(delfile) == "function" then
+			local ok, err = pcall(function() delfile(path) end)
+			if ok then
+				notify("Config", "Deleted config file. Press Load Config to reapply defaults.", 4)
+			else
+				notify("Config", "Delete failed: " .. tostring(err), 5)
+			end
+		else
+			notify("Config", "delfile() not available in this executor.", 5)
+		end
+	end
+})
+
+Header(Tabs.Settings, "Preferences")
+
+Tabs.Settings:CreateToggle({
+	Name = "Disable Notifications",
+	CurrentValue = state.disableNotifications,
+	Flag = "DisableNotifications",
+	Callback = function(on) state.disableNotifications = on and true or false end
+})
+
+Tabs.Settings:CreateSlider({
+	Name = "UI Scale",
+	Range = {0.7, 1.5},
+	Increment = 0.05,
+	Suffix = "x",
+	CurrentValue = state.uiScale,
+	Flag = "UIScale",
+	Callback = function(v)
+		local ok = setRayfieldScale(v)
+		if not ok then notify("UI", "Unable to locate Rayfield UI to scale.", 3, true) end
+	end
+})
+
+Tabs.Settings:CreateDropdown({
+	Name = "UI Theme",
+	Options = {"Default","Dark","Darker","Light"},
+	CurrentOption = {state.uiTheme},
+	MultipleOptions = false,
+	Flag = "UITheme",
+	Callback = function(opt)
+		if type(opt) == "table" then opt = opt[1] end
+		state.uiTheme = tostring(opt or "Default")
+		-- Best-effort: some Rayfield forks expose SetTheme / ChangeTheme
+		local applied = false
+		pcall(function()
+			if Rayfield.SetTheme then Rayfield:SetTheme(state.uiTheme); applied = true end
+			if Rayfield.ChangeTheme then Rayfield:ChangeTheme(state.uiTheme); applied = true end
+		end)
+		if not applied then
+			notify("UI Theme", "This Rayfield build does not support theme switching.", 4, true)
+		end
+	end
+})
+
+Tabs.Settings:CreateButton({
+	Name = "Reset All Settings",
+	Callback = function()
+		-- best-effort: remove config file if executor supports files
+		local ok = false
+		pcall(function()
+			if typeof(delfile) == "function" then
+				delfile("Rayfield/Configurations/Config.rfld")
+				ok = true
+			end
+		end)
+		if ok then
+			notify("Settings", "Configuration reset. Reopen UI to apply defaults.", 4, true)
+		else
+			notify("Settings", "Reset not supported in this environment.", 4, true)
+		end
+	end
+})
+
+Header(Tabs.Settings, "Player Info")
+
+local function listPlayers()
+	local t = {}
+	for _, p in ipairs(Players:GetPlayers()) do table.insert(t, p.Name) end
+	table.sort(t)
+	return t
+end
+
+local infoDropdown = Tabs.Settings:CreateDropdown({
+	Name = "Player",
+	Options = listPlayers(),
+	CurrentOption = {LocalPlayer.Name},
+	MultipleOptions = false,
+	Flag = "InfoPlayer",
+	Callback = function(opt)
+		if type(opt) == "table" then opt = opt[1] end
+		state.infoSelectedPlayer = tostring(opt or "")
+	end
+})
+
+setRFLabel(infoL1, "Name: " .. plr.Name)
+setRFLabel(infoL2, "Team: " .. teamName)
+setRFLabel(infoL3, "Health: " .. hp)
+setRFLabel(infoL4, "Distance: " .. dist)
+setRFLabel(infoL5, (plr == LocalPlayer and root) and string.format("Local: Pos(%.0f,%.0f,%.0f) Vel(%.0f)", root.Position.X, root.Position.Y, root.Position.Z, v.Magnitude) or "Local: -")
+
+Tabs.Settings:CreateToggle({
+	Name = "Auto Refresh",
+	CurrentValue = state.infoAutoRefresh,
+	Flag = "InfoAuto",
+	Callback = function(on) state.infoAutoRefresh = on and true or false end
+})
+
+Tabs.Settings:CreateSlider({
+	Name = "Refresh Rate",
+	Range = {0.2, 2},
+	Increment = 0.1,
+	Suffix = "s",
+	CurrentValue = state.infoRefreshRate,
+	Flag = "InfoRate",
+	Callback = function(v) state.infoRefreshRate = v end
+})
+
+Tabs.Settings:CreateButton({
+	Name = "Refresh Now",
+	Callback = function()
+		-- force one update
+		state._forceInfoRefresh = true
+	end
+})
+
+-- Force first update on load
+task.defer(function()
+	state._forceInfoRefresh = true
+end)
+
+track(Players.PlayerAdded:Connect(function()
+	dropdownSetValues(infoDropdown, listPlayers())
+end))
+track(Players.PlayerRemoving:Connect(function()
+	dropdownSetValues(infoDropdown, listPlayers())
+end))
+
+track(RunService.Heartbeat:Connect(function(dt)
+	if state.terminated then return end
+	if not state.infoAutoRefresh and not state._forceInfoRefresh then return end
+
+	state._infoAcc = (state._infoAcc or 0) + dt
+	if not state._forceInfoRefresh and state._infoAcc < state.infoRefreshRate then return end
+	state._infoAcc = 0
+	state._forceInfoRefresh = false
+
+	local name = state.infoSelectedPlayer ~= "" and state.infoSelectedPlayer or LocalPlayer.Name
+	local plr = Players:FindFirstChild(name)
+	if not plr then return end
+
+	local hum = getHumanoidOf(plr)
+	local root = getRootOf(plr)
+	local lroot = getRootOf(LocalPlayer)
+
+	local teamName = (plr.Team and plr.Team.Name) or "None"
+	local hp = hum and (math.floor(hum.Health + 0.5) .. "/" .. math.floor(hum.MaxHealth + 0.5)) or "-"
+	local dist = (root and lroot) and string.format("%.0fm", (root.Position - lroot.Position).Magnitude) or "-"
+
+	infoL1.Text = "Name: " .. plr.Name
+	infoL2.Text = "Team: " .. teamName
+	infoL3.Text = "Health: " .. hp
+	infoL4.Text = "Distance: " .. dist
+
+	if plr == LocalPlayer and root then
+		local v = root.AssemblyLinearVelocity
+		infoL5.Text = string.format("Local: Pos(%.0f,%.0f,%.0f) Vel(%.0f)", root.Position.X, root.Position.Y, root.Position.Z, v.Magnitude)
+	else
+		infoL5.Text = "Local: -"
+	end
+end))
+
+Header(Tabs.Settings, "UI") -- section
+
+Tabs.Settings:CreateToggle({
+	Name = "UI Visible",
+	CurrentValue = true,
+	Flag = "UIVisible",
+	Callback = function(on)
+		-- per docs: SetVisibility / IsVisible :contentReference[oaicite:2]{index=2}
+		local ok, err = rf_call("SetVisibility", on)
+		if not ok then
+			notify("UI", "SetVisibility failed: " .. tostring(err), 5)
+		end
+	end
+})
+
+Tabs.Settings:CreateButton({
+	Name = "Destroy UI",
+	Callback = function()
+		-- per docs: Destroy :contentReference[oaicite:3]{index=3}
+		local ok, err = rf_call("Destroy")
+		if not ok then
+			notify("UI", "Destroy failed: " .. tostring(err), 5)
+		end
+	end
+})
+
+--========================
+-- Initial refresh
+--========================
 task.defer(function()
 	refreshWeaponDropdown(true)
 	refreshTeamDropdown(true)
 	refreshTargetDropdown(true)
 	refreshSavedDropdown()
 end)
-
-Window:SelectTab(1)
