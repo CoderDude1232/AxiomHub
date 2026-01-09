@@ -1,10 +1,3 @@
---// Fluent Admin Panel (Client Only) - Full Script
---// LocalScript
---// Notes:
---// - Serverhop uses HttpService:GetAsync() (will error in normal LocalScript; works only if your environment supports client HTTP)
---// - Follow: when enabled (and on target switches) it TELEPORTS ONCE behind the target, then smoothly follows.
---// - Settings tab uses InterfaceManager + SaveManager (no custom settings UI).
-
 --========================
 -- Imports
 --========================
@@ -70,7 +63,6 @@ local function playerMatchesTeam(plr, teamName)
 	return plr.Team == team
 end
 
--- Track connections so Terminate can cleanly disconnect
 local connections = {}
 local function track(conn)
 	table.insert(connections, conn)
@@ -92,7 +84,6 @@ local Window = Fluent:CreateWindow({
 	MinimizeKey = MINIMIZE_KEY
 })
 
--- Reliable RightShift minimize (some setups ignore MinimizeKey)
 track(UIS.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
 	if Fluent.Unloaded then return end
