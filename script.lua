@@ -2746,7 +2746,7 @@ Tabs.Settings:CreateDropdown({
 		-- Best-effort: some Rayfield forks expose SetTheme / ChangeTheme
 		local applied = false
 		pcall(function()
-			Windows.ModifyTheme(state.uiTheme)
+			Window.ModifyTheme(state.uiTheme)
 		end)
 	end
 })
