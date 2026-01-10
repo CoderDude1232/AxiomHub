@@ -2736,7 +2736,7 @@ Tabs.Settings:CreateToggle({
 
 Tabs.Settings:CreateDropdown({
 	Name = "UI Theme",
-	Options = {"Default","AmberGlow","Amethyst","Bloom","DarkBlue","Green", "Light","Ocean","Serenity"},
+	Options = {"Default", "AmberGlow", "Amethyst", "Bloom", "DarkBlue", "Green", "Light", "Ocean", "Serenity"},
 	CurrentOption = {state.uiTheme},
 	MultipleOptions = false,
 	Flag = "UITheme",
@@ -2746,11 +2746,8 @@ Tabs.Settings:CreateDropdown({
 		-- Best-effort: some Rayfield forks expose SetTheme / ChangeTheme
 		local applied = false
 		pcall(function()
-			if Window.ModifyTheme then Windows.ModifyTheme(state.uiTheme); applied = true end
+			Windows.ModifyTheme(state.uiTheme)
 		end)
-		if not applied then
-			notify("UI Theme", "Could not set theme.", 4, true)
-		end
 	end
 })
 
