@@ -3524,24 +3524,6 @@ Tabs.Credits:CreateLabel("Script: Axiom Universal")
 Tabs.Credits:CreateLabel("Library: Rayfield")
 Tabs.Credits:CreateLabel("Creator: @etho_gg")
 
-Tabs.Credits:CreateParagraph({
-	Title = " Version 1.3",
-	Content =
-	"- HipHeight control\n" ..
-	"- Auto reset on death\n" ..
-	"- Bunny hop\n" ..
-	"- Spider / wall walk\n" ..
-	"- Teleport to ground\n" ..
-	"- Unstuck teleport\n" ..
-	"- No camera shake\n" ..
-	"- Restore visuals\n" ..
-	"- Rejoin on kick\n" ..
-	"- FPS / Ping / Memory display\n" ..
-	"- Improved Anti-Idle\n" ..
-	"- ESP box / skeleton modes\n" ..
-	"- ESP cleanup & stability fixes"
-})
-
 --========================
 -- Initial refresh
 --========================
