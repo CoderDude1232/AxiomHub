@@ -306,132 +306,134 @@ local Tabs = {
 --========================
 -- State
 --========================
+local prev = state or {}
+
 state = {
 	-- Player
-	state.hipHeight = state.hipHeight or 0,
-	state.hipHeightEnabled = (state.hipHeightEnabled ~= false) and state.hipHeightEnabled or false,
-	state.autoResetOnDeath = state.autoResetOnDeath or false,
+	hipHeight = prev.hipHeight or 0,
+	hipHeightEnabled = (prev.hipHeightEnabled ~= false) and prev.hipHeightEnabled or false,
+	autoResetOnDeath = prev.autoResetOnDeath or false,
 
 	-- Movement / Teleport
-	state.spiderWalk = state.spiderWalk or false,
-	state.tpToGroundOffset = state.tpToGroundOffset or 3,
-	state.unstuckEnabled = state.unstuckEnabled or false,
+	spiderWalk = prev.spiderWalk or false,
+	tpToGroundOffset = prev.tpToGroundOffset or 3,
+	unstuckEnabled = prev.unstuckEnabled or false,
 
 	-- Visual
-	state.noCamShake = state.noCamShake or false,
-	state.guiHidden = state.guiHidden or false,
+	noCamShake = prev.noCamShake or false,
+	guiHidden = prev.guiHidden or false,
 
 	-- Utility
-	state.rejoinOnKick = state.rejoinOnKick or false,
-	state.showPerfPanel = (state.showPerfPanel ~= false) and true or state.showPerfPanel,
-	state.antiIdlePro = state.antiIdlePro or false,
+	rejoinOnKick = prev.rejoinOnKick or false,
+	showPerfPanel = (prev.showPerfPanel ~= false) and true or prev.showPerfPanel,
+	antiIdlePro = prev.antiIdlePro or false,
 
 	-- movement
-	noclip = state.noclip or false,
-	infiniteJump = state.infiniteJump or false,
-	fly = state.fly or false,
-	flySpeed = state.flySpeed or 60,
+	noclip = prev.noclip or false,
+	infiniteJump = prev.infiniteJump or false,
+	fly = prev.fly or false,
+	flySpeed = prev.flySpeed or 60,
 
 	-- lighting
-	storedLighting = state.storedLighting,
+	storedLighting = prev.storedLighting,
 
 	-- waypoints
-	savedPositions = state.savedPositions or {},
+	savedPositions = prev.savedPositions or {},
 
 	-- ESP
-	espEnabled = state.espEnabled or false,
-	espShowNames = (state.espShowNames ~= false),
-	espShowDistance = (state.espShowDistance ~= false),
-	espShowHealth = (state.espShowHealth ~= false),
-	espShowTeam = (state.espShowTeam ~= false),
-	espTeamCheck = state.espTeamCheck or false,
-	espMaxDistance = state.espMaxDistance or 1500,
-	espRefreshRate = state.espRefreshRate or 0.15,
-	espTracers = state.espTracers or false,
+	espEnabled = prev.espEnabled or false,
+	espShowNames = (prev.espShowNames ~= false),
+	espShowDistance = (prev.espShowDistance ~= false),
+	espShowHealth = (prev.espShowHealth ~= false),
+	espShowTeam = (prev.espShowTeam ~= false),
+	espTeamCheck = prev.espTeamCheck or false,
+	espMaxDistance = prev.espMaxDistance or 1500,
+	espRefreshRate = prev.espRefreshRate or 0.15,
+	espTracers = prev.espTracers or false,
 
 	-- hitboxes
-	hitboxEnabled = state.hitboxEnabled or false,
-	hitboxSize = state.hitboxSize or 8,
-	hitboxTransparency = state.hitboxTransparency or 0.6,
+	hitboxEnabled = prev.hitboxEnabled or false,
+	hitboxSize = prev.hitboxSize or 8,
+	hitboxTransparency = prev.hitboxTransparency or 0.6,
 
 	-- follow
-	followEnabled = state.followEnabled or false,
-	followPaused = state.followPaused or false,
-	followOffsetBack = state.followOffsetBack or 4,
-	followOffsetUp = state.followOffsetUp or 0,
-	followUpdateRate = state.followUpdateRate or 0.01,
-	followSmoothness = state.followSmoothness or 12,
-	equipOnFollowOrTP = state.equipOnFollowOrTP or false,
+	followEnabled = prev.followEnabled or false,
+	followPaused = prev.followPaused or false,
+	followOffsetBack = prev.followOffsetBack or 4,
+	followOffsetUp = prev.followOffsetUp or 0,
+	followUpdateRate = prev.followUpdateRate or 0.01,
+	followSmoothness = prev.followSmoothness or 12,
+	equipOnFollowOrTP = prev.equipOnFollowOrTP or false,
 
 	-- predictive follow
-	followPredictive = state.followPredictive or false,
-	followPredictAhead = state.followPredictAhead or 0.25,
+	followPredictive = prev.followPredictive or false,
+	followPredictAhead = prev.followPredictAhead or 0.25,
 
 	-- health
-	infHealth = state.infHealth or false,
-	infHealthTarget = state.infHealthTarget or 100,
-	infHealthRate = state.infHealthRate or 0.1,
+	infHealth = prev.infHealth or false,
+	infHealthTarget = prev.infHealthTarget or 100,
+	infHealthRate = prev.infHealthRate or 0.1,
 
 	-- weapons
-	autoEquip = state.autoEquip or false,
+	autoEquip = prev.autoEquip or false,
 
 	-- team filter
-	targetTeamFilter = state.targetTeamFilter or "All",
+	targetTeamFilter = prev.targetTeamFilter or "All",
 
 	-- alt speed
-	altSpeedEnabled = state.altSpeedEnabled or false,
-	altSpeedBoost = state.altSpeedBoost or 0,
-	altSpeedMaxVel = state.altSpeedMaxVel or 120,
+	altSpeedEnabled = prev.altSpeedEnabled or false,
+	altSpeedBoost = prev.altSpeedBoost or 0,
+	altSpeedMaxVel = prev.altSpeedMaxVel or 120,
 
 	-- freecam
-	freecamEnabled = state.freecamEnabled or false,
-	freecamSpeed = state.freecamSpeed or 48,
-	freecamFastMult = state.freecamFastMult or 3,
+	freecamEnabled = prev.freecamEnabled or false,
+	freecamSpeed = prev.freecamSpeed or 48,
+	freecamFastMult = prev.freecamFastMult or 3,
 
 	-- terminate
-	terminated = state.terminated or false,
+	terminated = prev.terminated or false,
 
 	-- notifications
-	disableNotifications = state.disableNotifications or false,
+	disableNotifications = prev.disableNotifications or false,
 
 	-- UI
-	uiScale = state.uiScale or 1,
-	uiTheme = state.uiTheme or "Default",
+	uiScale = prev.uiScale or 1,
+	uiTheme = prev.uiTheme or "Default",
 
 	-- player info
-	infoSelectedPlayer = state.infoSelectedPlayer or "",
-	infoAutoRefresh = (state.infoAutoRefresh ~= false),
-	infoRefreshRate = state.infoRefreshRate or 0.5,
+	infoSelectedPlayer = prev.infoSelectedPlayer or "",
+	infoAutoRefresh = (prev.infoAutoRefresh ~= false),
+	infoRefreshRate = prev.infoRefreshRate or 0.5,
 
 	-- AFK/session
-	antiAfk = state.antiAfk or false,
-	sessionStart = state.sessionStart or os.clock(),
+	antiAfk = prev.antiAfk or false,
+	sessionStart = prev.sessionStart or os.clock(),
 
 	-- bunnyhop
-	bunnyHop = state.bunnyHop or false,
+	bunnyHop = prev.bunnyHop or false,
 
 	-- teleport extras
-	tpCursorEnabled = (state.tpCursorEnabled ~= false),
-	tpCircleEnabled = state.tpCircleEnabled or false,
-	tpCircleRadius = state.tpCircleRadius or 8,
-	tpCircleSpeed = state.tpCircleSpeed or 1.5,
+	tpCursorEnabled = (prev.tpCursorEnabled ~= false),
+	tpCircleEnabled = prev.tpCircleEnabled or false,
+	tpCircleRadius = prev.tpCircleRadius or 8,
+	tpCircleSpeed = prev.tpCircleSpeed or 1.5,
 
 	-- visuals
-	removeEffects = state.removeEffects or false,
-	nightVision = state.nightVision or false,
-	noWeather = state.noWeather or false,
-	noParticles = state.noParticles or false,
+	removeEffects = prev.removeEffects or false,
+	nightVision = prev.nightVision or false,
+	noWeather = prev.noWeather or false,
+	noParticles = prev.noParticles or false,
 
 	-- esp modes
-	espMode = state.espMode or "Highlight",
-	espTarget = state.espTarget or "",
-	espShowBar = (state.espShowBar ~= false),
+	espMode = prev.espMode or "Highlight",
+	espTarget = prev.espTarget or "",
+	espShowBar = (prev.espShowBar ~= false),
 
 	-- perf
-	fpsBoost = state.fpsBoost or false,
+	fpsBoost = prev.fpsBoost or false,
 
 	-- cooldown
-	hopCooldown = state.hopCooldown or 8,
+	hopCooldown = prev.hopCooldown or 8,
 }
 
 local ui = {
