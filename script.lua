@@ -308,23 +308,23 @@ local Tabs = {
 --========================
 state = {
 	-- Player
-	state.hipHeight = state.hipHeight or 0
-	state.hipHeightEnabled = (state.hipHeightEnabled ~= false) and state.hipHeightEnabled or false
-	state.autoResetOnDeath = state.autoResetOnDeath or false
+	state.hipHeight = state.hipHeight or 0,
+	state.hipHeightEnabled = (state.hipHeightEnabled ~= false) and state.hipHeightEnabled or false,
+	state.autoResetOnDeath = state.autoResetOnDeath or false,
 
 	-- Movement / Teleport
-	state.spiderWalk = state.spiderWalk or false
-	state.tpToGroundOffset = state.tpToGroundOffset or 3
-	state.unstuckEnabled = state.unstuckEnabled or false
+	state.spiderWalk = state.spiderWalk or false,
+	state.tpToGroundOffset = state.tpToGroundOffset or 3,
+	state.unstuckEnabled = state.unstuckEnabled or false,
 
 	-- Visual
-	state.noCamShake = state.noCamShake or false
-	state.guiHidden = state.guiHidden or false
+	state.noCamShake = state.noCamShake or false,
+	state.guiHidden = state.guiHidden or false,
 
 	-- Utility
-	state.rejoinOnKick = state.rejoinOnKick or false
-	state.showPerfPanel = (state.showPerfPanel ~= false) and true or state.showPerfPanel
-	state.antiIdlePro = state.antiIdlePro or false
+	state.rejoinOnKick = state.rejoinOnKick or false,
+	state.showPerfPanel = (state.showPerfPanel ~= false) and true or state.showPerfPanel,
+	state.antiIdlePro = state.antiIdlePro or false,
 
 	-- movement
 	noclip = state.noclip or false,
