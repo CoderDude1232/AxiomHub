@@ -463,7 +463,7 @@ Tabs.Credits:CreateParagraph({
 	"- UI: Rayfield\n" ..
 	"- Creator: @etho_gg\n" ..
 	"- Version: " .. VERSION .. "\n"
-	"- Edition: " .. premium() and "Premium" or "Standard"
+	"- Edition: " .. (premium() and "Premium" or "Standard")
 })
 
 Header(Tabs.Credits, "Changelog")
