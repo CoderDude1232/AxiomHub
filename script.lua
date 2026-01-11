@@ -265,7 +265,7 @@ end))
 --========================
 
 local MINIMIZE_KEY = Enum.KeyCode.RightShift
-local VERSION = "v1.1"
+local VERSION = "v1.2"
 
 local Window = Rayfield:CreateWindow({
 	Name = "Axiom " .. VERSION,
@@ -449,16 +449,21 @@ local ui = {
 -- CREDITS TAB
 --========================
 
+Header(Tabs.Credits, "Credits")
+
 Tabs.Credits:CreateParagraph({
 	Title = "Credits",
 	Content =
 	"- Name: Axiom\n" ..
 	"- UI: Rayfield\n" ..
-	"- Creator: @etho_gg"
+	"- Creator: @etho_gg" ..
+	"- Version: " .. VERSION
 })
 
+Header(Tabs.Credits, "Changelog")
+
 Tabs.Credits:CreateParagraph({
-	Title = "Changelog — v1.2",
+	Title = "v1.2",
 	Content =
 	"- HipHeight\n" ..
 	"- Auto reset on death\n" ..
@@ -475,7 +480,7 @@ Tabs.Credits:CreateParagraph({
 })
 
 Tabs.Credits:CreateParagraph({
-	Title = "Changelog — v1.1",
+	Title = "v1.1",
 	Content =
 	"- Initial Axiom release\n" ..
 	"- Core universal systems\n" ..
