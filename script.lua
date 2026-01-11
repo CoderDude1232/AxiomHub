@@ -462,7 +462,7 @@ Tabs.Credits:CreateParagraph({
 	"- Name: Axiom\n" ..
 	"- UI: Rayfield\n" ..
 	"- Creator: @etho_gg\n" ..
-	"- Version: " .. VERSION .. "\n"
+	"- Version: " .. VERSION .. "\n" ..
 	"- Edition: " .. (premium() and "Premium" or "Standard")
 })
 
