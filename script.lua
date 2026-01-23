@@ -266,17 +266,17 @@ end))
 
 local MINIMIZE_KEY = Enum.KeyCode.RightShift
 local AXIOM_PREMIUM = (_G.AXIOM_PREMIUM == true)
-local VERSION = "v1.3"
-local STATUS = "Undetected"
+local VERSION = "v1.4b"
+local STATUS = "Updating"
 
 local Window = Rayfield:CreateWindow({
 	Name = "Axiom " .. VERSION,
 	LoadingTitle = "Axiom",
-	LoadingSubtitle = "Universal Script",
+	LoadingSubtitle = "Loading Script...",
 	ConfigurationSaving = {
 		Enabled = true,
-		FolderName = "AxiomUniversal",
-		FileName = "Axiom"
+		FolderName = "Axiom",
+		FileName = "axiom-previous"
 	},
 	KeySystem = false,
 	DisableRayfieldPrompts = true,
